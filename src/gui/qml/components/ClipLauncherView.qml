@@ -18,6 +18,7 @@ Item {
   required property ClipEditor clipEditor
   required property ClipLauncher clipLauncher
   required property ClipPlaybackService clipPlaybackService
+  required property ClipSlotRecorder clipSlotRecorder
   readonly property EditorSettings editorSettings: timeline
   required property FileImporter fileImporter
 
@@ -529,6 +530,7 @@ Item {
       id: trackClipSlotForScene
 
       clipEditor: root.clipEditor
+      clipSlotRecorder: root.clipSlotRecorder
       clipPlaybackService: root.clipPlaybackService
       clipSlot: clipSlotsListView.scene.clipSlots.clipSlotForTrack(track)
       height: track.fullVisibleHeight

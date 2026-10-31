@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-ZrythmLicense
 
 add_executable(zrythm_controllers_unit_tests
+  clip_slot_recorder_test.cpp
   clipboard_test.cpp
   project_json_serializer_roundtrip_test.cpp
   project_json_serializer_structure_test.cpp

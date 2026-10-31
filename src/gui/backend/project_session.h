@@ -14,6 +14,7 @@
 #include "actions/track_collection_operator.h"
 #include "actions/track_creator.h"
 #include "actions/uuid_property_operator.h"
+#include "controllers/clip_slot_recorder.h"
 #include "controllers/clipboard.h"
 #include "controllers/recording_coordinator.h"
 #include "controllers/recording_materializer.h"
@@ -120,6 +121,9 @@ class ProjectSession : public QObject
     zrythm::controllers::TransportController * transportController READ
       transportController CONSTANT FINAL)
   Q_PROPERTY (
+    zrythm::controllers::ClipSlotRecorder * clipSlotRecorder READ
+      clipSlotRecorder CONSTANT FINAL)
+  Q_PROPERTY (
     QString projectDirectory READ projectDirectory WRITE setProjectDirectory
       NOTIFY projectDirectoryChanged FINAL)
   Q_PROPERTY (
@@ -161,6 +165,7 @@ public:
   actions::FileImporter *               fileImporter () const;
   actions::UuidPropertyOperator *       uuidPropertyOperator () const;
   controllers::TransportController *    transportController () const;
+  controllers::ClipSlotRecorder *       clipSlotRecorder () const;
   controllers::RecordingCoordinator *   recordingCoordinator () const;
 
   /**
@@ -293,6 +298,7 @@ private:
     recording_coordinator_;
   utils::QObjectUniquePtr<controllers::RecordingMaterializer>
     recording_materializer_;
+  utils::QObjectUniquePtr<controllers::ClipSlotRecorder> clip_slot_recorder_;
 
   // Operation dispatch for this session: the services operations run
   // against, and the available operations

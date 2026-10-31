@@ -13,6 +13,7 @@ Control {
   required property ClipEditor clipEditor
   required property ClipPlaybackService clipPlaybackService
   required property ClipSlot clipSlot
+  required property ClipSlotRecorder clipSlotRecorder
   // Quantization of the slot's launch/stop button (a ClipQuantizeOption)
   required property int launchQuantization
   required property ArrangerObjectCreator objectCreator
@@ -68,10 +69,57 @@ Control {
       enabled: root.clipObject !== null
       launchQuantization: root.launchQuantization
       track: root.track
+      visible: !recordButton.recording
 
       anchors {
         left: parent.left
         top: parent.top
+      }
+    }
+
+    // Records into the slot (empty slots of armed tracks) or stops the
+    // recording
+    ToolButton {
+      id: recordButton
+
+      readonly property bool recording: root.clipSlot.state === ClipSlot.Recording || root.clipSlot.state === ClipSlot.RecordQueued
+      readonly property bool trackArmed: root.track.recordingParam !== null && root.track.recordingParam.range.isToggled(root.track.recordingParam.baseValue)
+
+      palette.buttonText: ZrythmTheme.recordColor
+      text: recordButton.recording ? "■" : "●"
+      visible: recordButton.recording || (recordButton.trackArmed && root.clipSlot.clipObject === null)
+
+      onClicked: {
+        if (recordButton.recording)
+          root.clipSlotRecorder.stopRecording(root.track);
+        else
+          root.clipSlotRecorder.recordIntoClipSlot(root.track, root.clipSlot);
+      }
+
+      anchors {
+        left: parent.left
+        top: parent.top
+      }
+
+      // Blinks while waiting for the quantization point
+      SequentialAnimation on opacity {
+        alwaysRunToEnd: true
+        loops: Animation.Infinite
+        running: root.clipSlot.state === ClipSlot.RecordQueued
+
+        NumberAnimation {
+          duration: 300
+          to: 0.3
+        }
+
+        NumberAnimation {
+          duration: 300
+          to: 1.0
+        }
+      }
+
+      ToolTip {
+        text: recordButton.recording ? qsTr("Stop Recording") : qsTr("Record Into Slot")
       }
     }
 

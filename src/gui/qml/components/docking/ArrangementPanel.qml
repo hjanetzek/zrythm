@@ -142,6 +142,7 @@ SplitView {
       clipEditor: root.session.uiState.clipEditor
       clipLauncher: root.project.clipLauncher
       clipPlaybackService: root.project.clipPlaybackService
+      clipSlotRecorder: root.session.clipSlotRecorder
       fileImporter: root.session.fileImporter
       objectCreator: root.session.arrangerObjectCreator
       rulerHeight: root.rulerHeight

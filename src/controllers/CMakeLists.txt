@@ -5,6 +5,7 @@ qt_add_library(zrythm_controllers_lib STATIC)
 
 target_sources(zrythm_controllers_lib
   PRIVATE
+    clip_slot_recorder.cpp
     clipboard.cpp
     project_json_serializer.cpp
     project_loader.cpp
@@ -17,6 +18,7 @@ target_sources(zrythm_controllers_lib
     FILE_SET HEADERS
     BASE_DIRS ".."
     FILES
+      clip_slot_recorder.h
       clipboard.h
       project_json_serializer.h
       project_loader.h

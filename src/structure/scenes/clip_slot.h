@@ -37,6 +37,11 @@ public:
     PlayQueued,
     Playing,
     StopQueued,
+    /** Waiting for the quantization point to start recording into the slot.
+     */
+    RecordQueued,
+    /** Recording into the slot. */
+    Recording,
   };
   Q_ENUM (ClipState)
 

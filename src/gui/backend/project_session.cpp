@@ -4,6 +4,7 @@
 #include "utils/format_qt.h"
 #include <fmt/std.h>
 
+#include "commands/add_clip_to_clip_slot_command.h"
 #include "controllers/project_saver.h"
 #include "gui/backend/project_session.h"
 #include "gui/dsp/quantize_options.h"
@@ -568,6 +569,32 @@ ProjectSession::ProjectSession (
         static_cast<int> (RecordingMode::TakesMuted)));
     },
     this);
+
+  clip_slot_recorder_ = utils::make_qobject_unique<controllers::ClipSlotRecorder> (
+    *recording_materializer_, *project_->getTransport (), project_->tempo_map (),
+    *project_->clipLauncher (), *project_->tracklist ()->collection (),
+    [undo_stack = QPointer<undo::UndoStack> (undo_stack_.get ()),
+     &registry = project_->get_registry ()] (
+      structure::tracks::Track &track, structure::scenes::ClipSlot &slot,
+      structure::arrangement::ArrangerObjectUuidReference clip_ref) {
+      if (undo_stack.isNull ())
+        return;
+      // Recorded audio clips are already named after the recording
+      if (
+        auto * midi_clip =
+          clip_ref.get_object_as<structure::arrangement::MidiClip> ())
+        {
+          midi_clip->name ()->setName (
+            track.generate_name_for_clip (*midi_clip).to_qstring ());
+        }
+      undo_stack->push (
+        std::make_unique<commands::AddClipToClipSlotCommand> (
+          structure::scenes::ClipSlotUuidReference (slot.get_uuid (), registry),
+          std::move (clip_ref)));
+    },
+    this);
+  clip_slot_recorder_->set_clip_playback_service (
+    project_->clipPlaybackService ());
 }
 
 ProjectSession::~ProjectSession ()
@@ -732,6 +759,12 @@ controllers::TransportController *
 ProjectSession::transportController () const
 {
   return transport_controller_.get ();
+}
+
+controllers::ClipSlotRecorder *
+ProjectSession::clipSlotRecorder () const
+{
+  return clip_slot_recorder_.get ();
 }
 
 operations::OperationEnvironment *
