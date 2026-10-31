@@ -19,6 +19,8 @@ ApplicationWindow {
   property ProjectWindow currentProjectWindow: null
   readonly property DeviceManager deviceManager: app?.deviceManager ?? null
   readonly property NotificationCenter notificationCenter: app?.notificationCenter ?? null
+  // Whether the project requested at startup was opened
+  property bool pendingProjectLoadHandled: false
   readonly property string pendingProjectPath: app?.pendingProjectFile ?? ""
   readonly property PluginManager pluginManager: app?.pluginManager ?? null
   readonly property PluginScanManager pluginScanner: pluginManager?.scanner ?? null
@@ -265,7 +267,6 @@ ApplicationWindow {
       NavigatablePage {
         // Distinguishes this page when inspecting the StackView's current item
         readonly property bool isProjectSelectorPage: true
-        property bool pendingProjectLoadHandled: false
 
         notificationCenter: root.notificationCenter
         showBackButton: false
@@ -273,9 +274,10 @@ ApplicationWindow {
 
         StackView.onActivated: {
           // open the project requested on the command line or via a
-          // file-open request from the OS (once)
-          if (!pendingProjectLoadHandled && root.pendingProjectPath.length > 0) {
-            pendingProjectLoadHandled = true;
+          // file-open request from the OS (once per application run, also
+          // across new instances of this page)
+          if (!root.pendingProjectLoadHandled && root.pendingProjectPath.length > 0) {
+            root.pendingProjectLoadHandled = true;
             loadController.loadProject(root.pendingProjectPath);
           }
         }
