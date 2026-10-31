@@ -328,8 +328,11 @@ Key files:
     `scene.name` and `scene.color`. There's no UI to rename, delete,
     reorder or color scenes, although the model supports
     `removeScene`/`moveScene`. **Partly fixed:** headers show
-    `scene.name`, falling back to a translatable "Scene N". Color and
-    scene management are still open.
+    `scene.name`, falling back to a translatable "Scene N". **Fixed:**
+    right-clicking (or long-pressing) a scene header opens a menu with
+    Rename, Color, Insert Before, Move Left/Right, Stop and Delete. The
+    scene color shows as a strip under the header, and "+" adds a scene.
+    Reordering is by menu; there's no drag reordering yet.
 17. Double-tapping an empty slot creates a MIDI clip with **two
     hardcoded test notes** (pitches 64 and 68) and logs to the console.
     This is debug code, and it bypasses undo
@@ -342,6 +345,7 @@ Key files:
     quantization setting, and a choice of stop quantization, are still
     missing.
 19. There's no stop-scene button, though the service has `stopScene`.
+    **Fixed:** "Stop Scene" is in the scene header menu.
 20. There's no way to open a slot clip in the editor (piano roll or
     audio editor) from the launcher; this needs checking.
 21. QML style issues: `MouseArea` is used for right-click (rule: pointer
@@ -352,9 +356,16 @@ Key files:
 **Undo / model**
 
 22. Adding a scene, removing or moving scenes, the double-tap clip
-    creation, and switching track mode are not undoable.
+    creation, and switching track mode are not undoable. **Fixed except
+    for track mode:** a new `ClipLauncherOperator` uses `InsertScene`,
+    `RemoveScene` and `MoveScene` commands, plus
+    `ChangeQObjectPropertyCommand` for name and color. A removed scene
+    stays owned by its command, so undo restores its slots and clips.
+    Creating a scene from the phantom column together with its clip is one
+    undo step. Also fixed: `SceneList::moveScene` reported a wrong Qt move
+    destination when moving a scene to a later position.
 23. Scene `name` and `color` exist in the model and are serialized, but
-    nothing sets them in the UI.
+    nothing sets them in the UI. **Fixed** with 16.
 
 ### Not implemented at all (per the "Future Enhancements" section of `doc/dev/scenes_architecture.md`)
 
@@ -383,9 +394,11 @@ mapping, recording into slots, warping for launcher clips, launch modes
    start path, and add the finer quantize values (3).~~ Done.
 4. ~~Make the service robust: dangling slots and tracks (11), safe timer
    teardown (10) and resetting playing slots on mode switch (12).~~ Done.
-5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
-   (16), remove the debug notes (17)~~ (done); add scene management and
-   undo (16, 22).
+5. ~~UI: wire the stop and switch buttons (14, 15), use scene names
+   (16), remove the debug notes (17), add scene management and undo
+   (16, 22).~~ Done. Still open: a default launch/stop quantization
+   setting (18), opening slot clips in the editor (20), undoable track
+   mode switching (22).
 6. Respect the clip loop points and tempo (5, 6): ~~MIDI~~ done; audio
    still needs a position-independent launcher rendering.
 7. Recording into slots: see
