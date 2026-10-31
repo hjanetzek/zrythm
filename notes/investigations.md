@@ -98,6 +98,10 @@ Key files:
    off by that much from then on. The tests only cover boundaries that are
    exactly at a block start (`QuantizationTimingAccuracy`), so they don't
    catch this.
+   **Fixed** on branch `clip-launcher-fixes`: the start is now
+   sample-accurate, and a boundary exactly at the block end starts in the
+   next block. New `QuantizedStart*` tests failed before the fix and pass
+   after it.
 3. **Only Immediate, NextBar and NextBeat are implemented.**
    `NextQuarterBeat`…`NextThirtySecondBeat` fall into `default:` and start
    immediately.
@@ -198,8 +202,8 @@ mapping, recording into slots, warping for launcher clips, launch modes
 
 ### Suggested next steps (rough priority)
 
-1. Fix the quantized-start offset (2) and add a test with the boundary
-   inside a block.
+1. ~~Fix the quantized-start offset (2) and add a test with the boundary
+   inside a block.~~ Done.
 2. Fix clip switching on a track (4 and 9): queue the new clip until the
    quantization point, and reset the previous slot's state.
 3. Implement quantized stop (1), sharing the boundary maths with the
