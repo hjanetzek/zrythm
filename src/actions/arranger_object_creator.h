@@ -135,6 +135,23 @@ public:
     const utils::Utf8String         &clip_name,
     units::precise_tick_t            start_ticks);
 
+  /**
+   * @brief Creates an audio clip with @p initial_frames for a clip slot
+   * recording, without attaching it anywhere.
+   */
+  structure::arrangement::ArrangerObjectUuidReference
+  create_audio_clip_for_slot_recording (
+    const utils::audio::AudioBuffer &initial_frames,
+    const utils::Utf8String         &clip_name,
+    units::precise_tick_t            start_ticks);
+
+  /**
+   * @brief Creates an empty MIDI clip for a clip slot recording, without
+   * attaching it anywhere.
+   */
+  structure::arrangement::ArrangerObjectUuidReference
+  create_midi_clip_for_slot_recording (units::precise_tick_t start_ticks);
+
   structure::arrangement::ArrangerObjectUuidReference
   add_midi_clip_for_recording (
     structure::tracks::Track     &track,

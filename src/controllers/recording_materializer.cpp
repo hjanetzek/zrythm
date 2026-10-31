@@ -37,7 +37,14 @@ RecordingMaterializer::RecordingMaterializer (
     &RecordingMaterializer::on_midi_data_ready);
   QObject::connect (
     &recording_coordinator_, &RecordingCoordinator::recordingSessionEnded, this,
-    &RecordingMaterializer::finalize_recording_macro);
+    [this] () {
+      // Clip slot recordings end where their recorded data ends
+      const auto slot_track_ids =
+        slot_states_ | std::views::keys | std::ranges::to<std::vector> ();
+      for (const auto &track_id : slot_track_ids)
+        finish_clip_slot_recording (track_id, std::nullopt);
+      finalize_recording_macro ();
+    });
 }
 
 RecordingMaterializer::~RecordingMaterializer ()
@@ -52,6 +59,128 @@ RecordingMaterializer::~RecordingMaterializer ()
     }
 }
 
+bool
+RecordingMaterializer::begin_clip_slot_recording (
+  structure::tracks::TrackUuid track_id,
+  units::sample_t              start_position,
+  AttachClipFunc               attach_clip)
+{
+  if (!creators_.slot_audio_clip || !creators_.slot_midi_clip)
+    {
+      z_warning ("Clip slot recording is not supported here");
+      return false;
+    }
+  if (slot_states_.contains (track_id))
+    {
+      z_warning ("Track {} already records into a clip slot", track_id);
+      return false;
+    }
+
+  // Timeline recording of this track ends where the slot recording takes
+  // over
+  if (auto it = track_states_.find (track_id); it != track_states_.end ())
+    {
+      force_complete_pending_notes (it->second);
+      flush_current_clip_tail (it->second);
+      track_states_.erase (it);
+    }
+
+  TrackRecordingState state;
+  state.slot_target = TrackRecordingState::SlotTarget{
+    .start_position = start_position,
+    .end_position = std::nullopt,
+    .attach_clip = std::move (attach_clip),
+  };
+  slot_states_.emplace (track_id, std::move (state));
+  return true;
+}
+
+void
+RecordingMaterializer::end_clip_slot_recording (
+  structure::tracks::TrackUuid track_id,
+  units::sample_t              end_position)
+{
+  const auto it = slot_states_.find (track_id);
+  if (it == slot_states_.end ())
+    return;
+
+  it->second.slot_target->end_position = end_position;
+
+  // Data up to the end may already be recorded
+  if (
+    it->second.last_end_position.has_value ()
+    && *it->second.last_end_position >= end_position)
+    {
+      finish_clip_slot_recording (track_id, end_position);
+    }
+}
+
+std::optional<std::pair<units::sample_t, units::sample_t>>
+RecordingMaterializer::slot_window_overlap (
+  const TrackRecordingState::SlotTarget &target,
+  units::sample_t                        packet_start,
+  units::sample_t                        nframes)
+{
+  const auto start = max (packet_start, target.start_position);
+  auto       end = packet_start + nframes;
+  if (target.end_position.has_value ())
+    end = min (end, *target.end_position);
+  if (end <= start)
+    return std::nullopt;
+  return std::pair{ start, end };
+}
+
+void
+RecordingMaterializer::finish_clip_slot_recording_if_past_end (
+  structure::tracks::TrackUuid track_id,
+  units::sample_t              position)
+{
+  const auto it = slot_states_.find (track_id);
+  if (it == slot_states_.end ())
+    return;
+  const auto &end = it->second.slot_target->end_position;
+  if (end.has_value () && position >= *end)
+    finish_clip_slot_recording (track_id, *end);
+}
+
+void
+RecordingMaterializer::finish_clip_slot_recording (
+  structure::tracks::TrackUuid   track_id,
+  std::optional<units::sample_t> end_position)
+{
+  auto node = slot_states_.extract (track_id);
+  if (node.empty ())
+    return;
+  auto &state = node.mapped ();
+
+  structure::arrangement::Clip * finished_clip = nullptr;
+  if (state.current_clip.has_value ())
+    {
+      auto * clip =
+        state.current_clip->get_object_as<structure::arrangement::Clip> ();
+      const auto recorded_end = end_position.value_or (*state.last_end_position);
+
+      // Pending notes end where the recording ends
+      state.last_end_position = recorded_end;
+      force_complete_pending_notes (state);
+      flush_current_clip_tail (state);
+
+      // The clip covers the recorded window and loops over it from
+      // position 0
+      const auto &tempo_map = clip->get_tempo_map ();
+      const auto  length =
+        tempo_map.samples_to_tick (recorded_end) - clip->position ()->asTick ();
+      clip->position ()->setTicks (0.0);
+      clip->length ()->setTicks (length.asDouble ());
+      const auto zero = dsp::ContentTick{ units::ticks (0.0) };
+      clip->set_loop_range (
+        zero, zero, dsp::ContentTick{ length.asQuantity () });
+      finished_clip = clip;
+    }
+
+  Q_EMIT clipSlotRecordingFinished (track_id, finished_clip);
+}
+
 void
 RecordingMaterializer::on_audio_data_ready (
   structure::tracks::TrackUuid             track_id,
@@ -59,69 +188,118 @@ RecordingMaterializer::on_audio_data_ready (
 {
   for (const auto &packet : packets)
     {
-      if (!packet.transport_recording)
-        continue;
-
-      auto      &state = track_states_[track_id];
-      const auto num_frames =
-        static_cast<int> (packet.nframes.in (units::samples));
-
-      const bool discontinuous =
-        !state.last_end_position.has_value ()
-        || packet.timeline_position != *state.last_end_position;
-
-      if (discontinuous)
+      const auto packet_end = packet.timeline_position + packet.nframes;
+      if (auto it = slot_states_.find (track_id); it != slot_states_.end ())
         {
-          handle_discontinuity (state);
-        }
-
-      scratch_buf_.setSize (2, num_frames, false, false, true);
-      scratch_buf_.copyFrom (0, 0, packet.l_frames.data (), num_frames);
-      scratch_buf_.copyFrom (1, 0, packet.r_frames.data (), num_frames);
-
-      bool newly_created = false;
-      if (!state.current_clip.has_value ())
-        {
-          state.current_clip = get_or_create_clip (
-            state, track_id, packet.timeline_position, scratch_buf_);
-
-          if (!state.current_clip.has_value ())
+          auto &state = it->second;
+          if (
+            state.current_clip.has_value ()
+            && !continues_recording (state, packet.timeline_position))
             {
-              z_warning (
-                "Failed to create clip for track {} at position {} — "
-                "dropping {} frames",
-                track_id, packet.timeline_position,
-                packet.nframes.in (units::samples));
+              // A gap (e.g. a transport loop) ends the recording
+              finish_clip_slot_recording (track_id, std::nullopt);
               continue;
             }
 
-          newly_created = true;
+          // Only the part inside the recording window is recorded
+          const auto overlap = slot_window_overlap (
+            *state.slot_target, packet.timeline_position, packet.nframes);
+          if (overlap.has_value ())
+            {
+              const auto [start, end] = *overlap;
+              const auto offset =
+                (start - packet.timeline_position).in<size_t> (units::samples);
+              const auto count = (end - start).in<size_t> (units::samples);
+              const auto frames = [&] (const std::vector<float> &channel) {
+                const auto first = std::ranges::next (
+                  channel.begin (), static_cast<std::ptrdiff_t> (offset));
+                return std::vector<float> (
+                  first,
+                  std::ranges::next (first, static_cast<std::ptrdiff_t> (count)));
+              };
+              const RecordingAudioPacket window_packet{
+                .timeline_position = start,
+                .transport_recording = true,
+                .nframes = au::round_as<uint32_t> (
+                  units::samples, units::samples (static_cast<int64_t> (count))),
+                .l_frames = frames (packet.l_frames),
+                .r_frames = frames (packet.r_frames),
+              };
+              materialize_audio_packet (state, track_id, window_packet);
+            }
+          finish_clip_slot_recording_if_past_end (track_id, packet_end);
+          continue;
         }
 
-      auto * clip =
-        state.current_clip->get_object_as<structure::arrangement::AudioClip> ();
-      auto * source = get_audio_source_for_clip (*clip);
+      if (!packet.transport_recording)
+        continue;
 
-      if (!newly_created)
-        {
-          source->append_frames (scratch_buf_);
-        }
-
-      // Length is the tick span of the recorded audio at its timeline
-      // position
-      const auto &tm = clip->get_tempo_map ();
-      const auto  clip_start_samples =
-        tm.tick_to_samples_rounded (clip->position ()->asTick ());
-      const auto clip_end_samples =
-        clip_start_samples + source->get_num_frames ();
-      clip->length ()->setTicks (
-        (tm.samples_to_tick (clip_end_samples) - clip->position ()->asTick ())
-          .asDouble ());
-
-      state.last_end_position =
-        packet.timeline_position
-        + units::samples (static_cast<int64_t> (num_frames));
+      materialize_audio_packet (track_states_[track_id], track_id, packet);
     }
+}
+
+void
+RecordingMaterializer::materialize_audio_packet (
+  TrackRecordingState         &state,
+  structure::tracks::TrackUuid track_id,
+  const RecordingAudioPacket  &packet)
+{
+  const auto num_frames = static_cast<int> (packet.nframes.in (units::samples));
+
+  const bool discontinuous =
+    !state.last_end_position.has_value ()
+    || packet.timeline_position != *state.last_end_position;
+
+  if (discontinuous)
+    {
+      handle_discontinuity (state);
+    }
+
+  scratch_buf_.setSize (2, num_frames, false, false, true);
+  scratch_buf_.copyFrom (0, 0, packet.l_frames.data (), num_frames);
+  scratch_buf_.copyFrom (1, 0, packet.r_frames.data (), num_frames);
+
+  bool newly_created = false;
+  if (!state.current_clip.has_value ())
+    {
+      state.current_clip = get_or_create_clip (
+        state, track_id, packet.timeline_position, scratch_buf_);
+
+      if (!state.current_clip.has_value ())
+        {
+          z_warning (
+            "Failed to create clip for track {} at position {} — "
+            "dropping {} frames",
+            track_id, packet.timeline_position,
+            packet.nframes.in (units::samples));
+          return;
+        }
+
+      newly_created = true;
+    }
+
+  auto * clip =
+    state.current_clip->get_object_as<structure::arrangement::AudioClip> ();
+  auto * source = get_audio_source_for_clip (*clip);
+
+  if (!newly_created)
+    {
+      source->append_frames (scratch_buf_);
+    }
+
+  // Length is the tick span of the recorded audio at its timeline
+  // position
+  const auto &tm = clip->get_tempo_map ();
+  const auto  clip_start_samples =
+    tm.tick_to_samples_rounded (clip->position ()->asTick ());
+  const auto clip_end_samples = clip_start_samples + source->get_num_frames ();
+  clip->length ()->setTicks (
+    (tm.samples_to_tick (clip_end_samples) - clip->position ()->asTick ())
+      .asDouble ());
+
+  state.last_end_position =
+    packet.timeline_position
+    + units::samples (static_cast<int64_t> (num_frames));
 }
 
 std::optional<structure::arrangement::ArrangerObjectUuidReference>
@@ -131,6 +309,17 @@ RecordingMaterializer::get_or_create_clip (
   units::sample_t                  start_position,
   const utils::audio::AudioBuffer &initial_frames)
 {
+  if (state.slot_target.has_value ())
+    {
+      if (!creators_.slot_audio_clip)
+        return std::nullopt;
+      auto clip_ref =
+        creators_.slot_audio_clip (track_id, start_position, initial_frames);
+      if (clip_ref.has_value ())
+        state.slot_target->attach_clip (*clip_ref);
+      return clip_ref;
+    }
+
   ensure_recording_macro ();
 
   auto result = creators_.audio_clip (
@@ -252,6 +441,18 @@ RecordingMaterializer::ensure_midi_clip (
   if (state.current_clip.has_value ())
     return true;
 
+  if (state.slot_target.has_value ())
+    {
+      if (!creators_.slot_midi_clip)
+        return false;
+      auto clip_ref = creators_.slot_midi_clip (track_id, start_position);
+      if (!clip_ref.has_value ())
+        return false;
+      state.slot_target->attach_clip (*clip_ref);
+      state.current_clip = std::move (clip_ref);
+      return true;
+    }
+
   ensure_recording_macro ();
 
   auto result =
@@ -303,94 +504,90 @@ RecordingMaterializer::on_midi_data_ready (
 {
   for (const auto &packet : packets)
     {
-      if (!packet.transport_recording)
-        continue;
-
-      auto &state = track_states_[track_id];
-
-      if (
-        !state.last_end_position.has_value ()
-        || packet.timeline_position != *state.last_end_position)
-        {
-          handle_discontinuity (state);
-        }
-
-      if (!ensure_midi_clip (state, track_id, packet.timeline_position))
-        {
-          z_warning (
-            "Failed to create clip for track {} at position {} — dropping "
-            "packet",
-            track_id, packet.timeline_position);
-          continue;
-        }
-
       const auto packet_end = packet.timeline_position + packet.nframes;
-
-      if (
-        state.current_clip.has_value () && creators_.chord_object
-        && state.current_clip->get_object_as<structure::arrangement::ChordClip> ()
-             != nullptr)
+      if (auto it = slot_states_.find (track_id); it != slot_states_.end ())
         {
-          auto * chord_clip = state.current_clip->get_object_as<
-            structure::arrangement::ChordClip> ();
-          const auto clip_start =
-            chord_clip->get_tempo_map ().tick_to_samples_rounded (
-              chord_clip->position ()->asTick ());
-          for (const auto &ev : packet.midi_events)
+          auto &state = it->second;
+          if (
+            state.current_clip.has_value ()
+            && !continues_recording (state, packet.timeline_position))
             {
-              const auto d = ev.data ();
-              if (d.empty ())
-                continue;
-              const auto status = d[0];
-              const auto type =
-                static_cast<uint8_t> (status & utils::midi::MIDI_STATUS_MASK);
-              const auto d1 =
-                d.size () > 1
-                  ? static_cast<uint8_t> (d[1] & utils::midi::MIDI_DATA_MASK)
-                  : uint8_t{ 0 };
-              const auto d2 =
-                d.size () > 2
-                  ? static_cast<uint8_t> (d[2] & utils::midi::MIDI_DATA_MASK)
-                  : uint8_t{ 0 };
-              if (type == utils::midi::MIDI_CH1_NOTE_ON && d2 > 0)
+              // A gap (e.g. a transport loop) ends the recording
+              finish_clip_slot_recording (track_id, std::nullopt);
+              continue;
+            }
+
+          // Only the part inside the recording window is recorded
+          const auto overlap = slot_window_overlap (
+            *state.slot_target, packet.timeline_position, packet.nframes);
+          if (overlap.has_value ())
+            {
+              const auto [start, end] = *overlap;
+              const auto offset = au::round_as<uint32_t> (
+                units::samples, start - packet.timeline_position);
+              RecordingMidiPacket window_packet{
+                .timeline_position = start,
+                .transport_recording = true,
+                .nframes = au::round_as<uint32_t> (units::samples, end - start),
+                .midi_events = dsp::MidiEventBuffer::make_reserved (),
+              };
+              for (const auto &ev : packet.midi_events)
                 {
-                  const auto event_sample_pos =
+                  const auto event_position =
                     packet.timeline_position
                     + units::samples (
                       static_cast<int64_t> (ev.time ().in (units::samples)));
-                  creators_.chord_object (
-                    *chord_clip, event_sample_pos - clip_start, d1);
+                  if (event_position >= start && event_position < end)
+                    window_packet.midi_events.push_back (
+                      ev.time () - offset, ev.data ());
                 }
+              materialize_midi_packet (state, track_id, window_packet);
             }
-          const auto length_tick =
-            chord_clip->get_tempo_map ().samples_to_tick (packet_end)
-            - chord_clip->position ()->asTick ();
-          if (packet_end < clip_start)
-            {
-              throw std::runtime_error (
-                fmt::format (
-                  "Computed negative chord clip length: {}",
-                  packet_end - clip_start));
-            }
-          chord_clip->length ()->setTicks (length_tick.asDouble ());
-          state.last_end_position = packet_end;
+          finish_clip_slot_recording_if_past_end (track_id, packet_end);
           continue;
         }
 
-      const auto get_midi_clip_and_offset = [&] (units::sample_t pos)
-        -> std::optional<
-          std::pair<structure::arrangement::MidiClip *, units::sample_t>> {
-        if (!ensure_midi_clip (state, track_id, pos))
-          return std::nullopt;
-        auto * clip =
-          state.current_clip->get_object_as<structure::arrangement::MidiClip> ();
-        if (clip == nullptr)
-          return std::nullopt;
-        const auto clip_start = clip->get_tempo_map ().tick_to_samples_rounded (
-          clip->position ()->asTick ());
-        return std::pair{ clip, clip_start };
-      };
+      if (!packet.transport_recording)
+        continue;
 
+      materialize_midi_packet (track_states_[track_id], track_id, packet);
+    }
+}
+
+void
+RecordingMaterializer::materialize_midi_packet (
+  TrackRecordingState         &state,
+  structure::tracks::TrackUuid track_id,
+  const RecordingMidiPacket   &packet)
+{
+  if (
+    !state.last_end_position.has_value ()
+    || packet.timeline_position != *state.last_end_position)
+    {
+      handle_discontinuity (state);
+    }
+
+  if (!ensure_midi_clip (state, track_id, packet.timeline_position))
+    {
+      z_warning (
+        "Failed to create clip for track {} at position {} — dropping "
+        "packet",
+        track_id, packet.timeline_position);
+      return;
+    }
+
+  const auto packet_end = packet.timeline_position + packet.nframes;
+
+  if (
+    state.current_clip.has_value () && creators_.chord_object
+    && state.current_clip->get_object_as<structure::arrangement::ChordClip> ()
+         != nullptr)
+    {
+      auto * chord_clip =
+        state.current_clip->get_object_as<structure::arrangement::ChordClip> ();
+      const auto clip_start =
+        chord_clip->get_tempo_map ().tick_to_samples_rounded (
+          chord_clip->position ()->asTick ());
       for (const auto &ev : packet.midi_events)
         {
           const auto d = ev.data ();
@@ -399,8 +596,6 @@ RecordingMaterializer::on_midi_data_ready (
           const auto status = d[0];
           const auto type =
             static_cast<uint8_t> (status & utils::midi::MIDI_STATUS_MASK);
-          const auto channel =
-            static_cast<uint8_t> (status & utils::midi::MIDI_CHANNEL_MASK);
           const auto d1 =
             d.size () > 1
               ? static_cast<uint8_t> (d[1] & utils::midi::MIDI_DATA_MASK)
@@ -409,162 +604,211 @@ RecordingMaterializer::on_midi_data_ready (
             d.size () > 2
               ? static_cast<uint8_t> (d[2] & utils::midi::MIDI_DATA_MASK)
               : uint8_t{ 0 };
-
-          const auto event_sample_pos =
-            packet.timeline_position
-            + units::samples (
-              static_cast<int64_t> (ev.time ().in (units::samples)));
-
           if (type == utils::midi::MIDI_CH1_NOTE_ON && d2 > 0)
             {
-              if (!ensure_midi_clip (state, track_id, event_sample_pos))
+              const auto event_sample_pos =
+                packet.timeline_position
+                + units::samples (
+                  static_cast<int64_t> (ev.time ().in (units::samples)));
+              creators_.chord_object (
+                *chord_clip, event_sample_pos - clip_start, d1);
+            }
+        }
+      const auto length_tick =
+        chord_clip->get_tempo_map ().samples_to_tick (packet_end)
+        - chord_clip->position ()->asTick ();
+      if (packet_end < clip_start)
+        {
+          throw std::runtime_error (
+            fmt::format (
+              "Computed negative chord clip length: {}",
+              packet_end - clip_start));
+        }
+      chord_clip->length ()->setTicks (length_tick.asDouble ());
+      state.last_end_position = packet_end;
+      return;
+    }
+
+  const auto get_midi_clip_and_offset = [&] (units::sample_t pos)
+    -> std::optional<
+      std::pair<structure::arrangement::MidiClip *, units::sample_t>> {
+    if (!ensure_midi_clip (state, track_id, pos))
+      return std::nullopt;
+    auto * clip =
+      state.current_clip->get_object_as<structure::arrangement::MidiClip> ();
+    if (clip == nullptr)
+      return std::nullopt;
+    const auto clip_start = clip->get_tempo_map ().tick_to_samples_rounded (
+      clip->position ()->asTick ());
+    return std::pair{ clip, clip_start };
+  };
+
+  for (const auto &ev : packet.midi_events)
+    {
+      const auto d = ev.data ();
+      if (d.empty ())
+        continue;
+      const auto status = d[0];
+      const auto type =
+        static_cast<uint8_t> (status & utils::midi::MIDI_STATUS_MASK);
+      const auto channel =
+        static_cast<uint8_t> (status & utils::midi::MIDI_CHANNEL_MASK);
+      const auto d1 =
+        d.size () > 1
+          ? static_cast<uint8_t> (d[1] & utils::midi::MIDI_DATA_MASK)
+          : uint8_t{ 0 };
+      const auto d2 =
+        d.size () > 2
+          ? static_cast<uint8_t> (d[2] & utils::midi::MIDI_DATA_MASK)
+          : uint8_t{ 0 };
+
+      const auto event_sample_pos =
+        packet.timeline_position
+        + units::samples (static_cast<int64_t> (ev.time ().in (units::samples)));
+
+      if (type == utils::midi::MIDI_CH1_NOTE_ON && d2 > 0)
+        {
+          if (!ensure_midi_clip (state, track_id, event_sample_pos))
+            {
+              z_warning (
+                "Failed to create MIDI clip for note-on (pitch={}, "
+                "ch={}) at position {} — dropping note",
+                d1, channel, event_sample_pos);
+              continue;
+            }
+          const auto key =
+            static_cast<uint16_t> ((static_cast<uint16_t> (channel) << 8) | d1);
+          state.unended_notes[key].push_back ({ event_sample_pos, d2, channel });
+        }
+      else if (
+        type == utils::midi::MIDI_CH1_NOTE_OFF
+        || (type == utils::midi::MIDI_CH1_NOTE_ON && d2 == 0))
+        {
+          const auto key =
+            static_cast<uint16_t> ((static_cast<uint16_t> (channel) << 8) | d1);
+          auto note_it = state.unended_notes.find (key);
+          if (note_it != state.unended_notes.end () && !note_it->second.empty ())
+            {
+              if (!state.current_clip.has_value ())
                 {
                   z_warning (
-                    "Failed to create MIDI clip for note-on (pitch={}, "
-                    "ch={}) at position {} — dropping note",
+                    "Note-off (pitch={}, ch={}) at position {} has no "
+                    "active clip — stale note dropped",
                     d1, channel, event_sample_pos);
-                  continue;
-                }
-              const auto key = static_cast<uint16_t> (
-                (static_cast<uint16_t> (channel) << 8) | d1);
-              state.unended_notes[key].push_back (
-                { event_sample_pos, d2, channel });
-            }
-          else if (
-            type == utils::midi::MIDI_CH1_NOTE_OFF
-            || (type == utils::midi::MIDI_CH1_NOTE_ON && d2 == 0))
-            {
-              const auto key = static_cast<uint16_t> (
-                (static_cast<uint16_t> (channel) << 8) | d1);
-              auto note_it = state.unended_notes.find (key);
-              if (
-                note_it != state.unended_notes.end ()
-                && !note_it->second.empty ())
-                {
-                  if (!state.current_clip.has_value ())
-                    {
-                      z_warning (
-                        "Note-off (pitch={}, ch={}) at position {} has no "
-                        "active clip — stale note dropped",
-                        d1, channel, event_sample_pos);
-                      note_it->second.pop_front ();
-                      if (note_it->second.empty ())
-                        state.unended_notes.erase (note_it);
-                      continue;
-                    }
-
-                  auto * clip = state.current_clip->get_object_as<
-                    structure::arrangement::MidiClip> ();
-                  if (clip != nullptr)
-                    {
-                      const auto &pending = note_it->second.front ();
-                      const auto  clip_start =
-                        clip->get_tempo_map ().tick_to_samples_rounded (
-                          clip->position ()->asTick ());
-                      creators_.midi_note (
-                        *clip, pending.start_position - clip_start,
-                        event_sample_pos - clip_start, d1, pending.velocity,
-                        pending.channel);
-                    }
-
                   note_it->second.pop_front ();
                   if (note_it->second.empty ())
                     state.unended_notes.erase (note_it);
+                  continue;
                 }
-            }
-          else if (type == utils::midi::MIDI_CH1_CTRL_CHANGE)
-            {
-              auto r = get_midi_clip_and_offset (event_sample_pos);
-              if (r.has_value ())
+
+              auto * clip = state.current_clip->get_object_as<
+                structure::arrangement::MidiClip> ();
+              if (clip != nullptr)
                 {
-                  auto [clip, clip_start] = *r;
-                  creators_.midi_control_event (
-                    *clip, event_sample_pos - clip_start,
-                    structure::arrangement::MidiControlEvent::EventType::
-                      ControlChange,
-                    channel, d1, d2);
+                  const auto &pending = note_it->second.front ();
+                  const auto  clip_start =
+                    clip->get_tempo_map ().tick_to_samples_rounded (
+                      clip->position ()->asTick ());
+                  creators_.midi_note (
+                    *clip, pending.start_position - clip_start,
+                    event_sample_pos - clip_start, d1, pending.velocity,
+                    pending.channel);
                 }
-            }
-          else if (type == utils::midi::MIDI_CH1_PITCH_WHEEL_RANGE)
-            {
-              auto r = get_midi_clip_and_offset (event_sample_pos);
-              if (r.has_value ())
-                {
-                  auto [clip, clip_start] = *r;
-                  const auto pb_value = (d2 << 7) | d1;
-                  creators_.midi_control_event (
-                    *clip, event_sample_pos - clip_start,
-                    structure::arrangement::MidiControlEvent::EventType::PitchBend,
-                    channel, 0, pb_value);
-                }
-            }
-          else if (type == utils::midi::MIDI_CH1_CHAN_AFTERTOUCH)
-            {
-              auto r = get_midi_clip_and_offset (event_sample_pos);
-              if (r.has_value ())
-                {
-                  auto [clip, clip_start] = *r;
-                  creators_.midi_control_event (
-                    *clip, event_sample_pos - clip_start,
-                    structure::arrangement::MidiControlEvent::EventType::
-                      ChannelPressure,
-                    channel, 0, d1);
-                }
-            }
-          else if (type == utils::midi::MIDI_CH1_POLY_AFTERTOUCH)
-            {
-              auto r = get_midi_clip_and_offset (event_sample_pos);
-              if (r.has_value ())
-                {
-                  auto [clip, clip_start] = *r;
-                  creators_.midi_control_event (
-                    *clip, event_sample_pos - clip_start,
-                    structure::arrangement::MidiControlEvent::EventType::
-                      PolyKeyPressure,
-                    channel, d1, d2);
-                }
-            }
-          else if (type == utils::midi::MIDI_CH1_PROG_CHANGE)
-            {
-              auto r = get_midi_clip_and_offset (event_sample_pos);
-              if (r.has_value ())
-                {
-                  auto [clip, clip_start] = *r;
-                  creators_.midi_control_event (
-                    *clip, event_sample_pos - clip_start,
-                    structure::arrangement::MidiControlEvent::EventType::
-                      ProgramChange,
-                    channel, 0, d1);
-                }
+
+              note_it->second.pop_front ();
+              if (note_it->second.empty ())
+                state.unended_notes.erase (note_it);
             }
         }
-
-      if (state.current_clip.has_value ())
+      else if (type == utils::midi::MIDI_CH1_CTRL_CHANGE)
         {
-          auto * clip = state.current_clip->get_object_as<
-            structure::arrangement::MidiClip> ();
-          if (clip != nullptr)
+          auto r = get_midi_clip_and_offset (event_sample_pos);
+          if (r.has_value ())
             {
-              const auto clip_start =
-                clip->get_tempo_map ().tick_to_samples_rounded (
-                  clip->position ()->asTick ());
-              if (packet_end < clip_start)
-                {
-                  throw std::runtime_error (
-                    fmt::format (
-                      "Computed negative MIDI clip length: {}",
-                      packet_end - clip_start));
-                }
-              // Length is the tick span of [clip_start, packet_end] at the
-              // recording tempo
-              const auto length_tick =
-                clip->get_tempo_map ().samples_to_tick (packet_end)
-                - clip->position ()->asTick ();
-              clip->length ()->setTicks (length_tick.asDouble ());
+              auto [clip, clip_start] = *r;
+              creators_.midi_control_event (
+                *clip, event_sample_pos - clip_start,
+                structure::arrangement::MidiControlEvent::EventType::ControlChange,
+                channel, d1, d2);
             }
         }
-
-      state.last_end_position = packet.timeline_position + packet.nframes;
+      else if (type == utils::midi::MIDI_CH1_PITCH_WHEEL_RANGE)
+        {
+          auto r = get_midi_clip_and_offset (event_sample_pos);
+          if (r.has_value ())
+            {
+              auto [clip, clip_start] = *r;
+              const auto pb_value = (d2 << 7) | d1;
+              creators_.midi_control_event (
+                *clip, event_sample_pos - clip_start,
+                structure::arrangement::MidiControlEvent::EventType::PitchBend,
+                channel, 0, pb_value);
+            }
+        }
+      else if (type == utils::midi::MIDI_CH1_CHAN_AFTERTOUCH)
+        {
+          auto r = get_midi_clip_and_offset (event_sample_pos);
+          if (r.has_value ())
+            {
+              auto [clip, clip_start] = *r;
+              creators_.midi_control_event (
+                *clip, event_sample_pos - clip_start,
+                structure::arrangement::MidiControlEvent::EventType::
+                  ChannelPressure,
+                channel, 0, d1);
+            }
+        }
+      else if (type == utils::midi::MIDI_CH1_POLY_AFTERTOUCH)
+        {
+          auto r = get_midi_clip_and_offset (event_sample_pos);
+          if (r.has_value ())
+            {
+              auto [clip, clip_start] = *r;
+              creators_.midi_control_event (
+                *clip, event_sample_pos - clip_start,
+                structure::arrangement::MidiControlEvent::EventType::
+                  PolyKeyPressure,
+                channel, d1, d2);
+            }
+        }
+      else if (type == utils::midi::MIDI_CH1_PROG_CHANGE)
+        {
+          auto r = get_midi_clip_and_offset (event_sample_pos);
+          if (r.has_value ())
+            {
+              auto [clip, clip_start] = *r;
+              creators_.midi_control_event (
+                *clip, event_sample_pos - clip_start,
+                structure::arrangement::MidiControlEvent::EventType::ProgramChange,
+                channel, 0, d1);
+            }
+        }
     }
+
+  if (state.current_clip.has_value ())
+    {
+      auto * clip =
+        state.current_clip->get_object_as<structure::arrangement::MidiClip> ();
+      if (clip != nullptr)
+        {
+          const auto clip_start = clip->get_tempo_map ().tick_to_samples_rounded (
+            clip->position ()->asTick ());
+          if (packet_end < clip_start)
+            {
+              throw std::runtime_error (
+                fmt::format (
+                  "Computed negative MIDI clip length: {}",
+                  packet_end - clip_start));
+            }
+          // Length is the tick span of [clip_start, packet_end] at the
+          // recording tempo
+          const auto length_tick =
+            clip->get_tempo_map ().samples_to_tick (packet_end)
+            - clip->position ()->asTick ();
+          clip->length ()->setTicks (length_tick.asDouble ());
+        }
+    }
+
+  state.last_end_position = packet.timeline_position + packet.nframes;
 }
 }

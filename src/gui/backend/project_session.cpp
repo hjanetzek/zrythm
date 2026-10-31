@@ -527,6 +527,39 @@ ProjectSession::ProjectSession (
           creator_ptr->addChordObjectFromDescriptor (
             &clip, ticks.asDouble (), descriptor);
         },
+      .slot_audio_clip =
+        [creator_ptr = QPointer<actions::ArrangerObjectCreator> (
+           arranger_object_creator_.get ()),
+         project_ptr = QPointer<structure::project::Project> (project_.get ())] (
+          structure::tracks::TrackUuid track_id, units::sample_t start_position,
+          const utils::audio::AudioBuffer &initial_frames)
+        -> std::optional<structure::arrangement::ArrangerObjectUuidReference> {
+        if (creator_ptr.isNull () || project_ptr.isNull ())
+          return std::nullopt;
+        auto * track = project_ptr->tracklist ()->get_track (track_id);
+        if (track == nullptr)
+          return std::nullopt;
+        const auto start_ticks = project_ptr->tempo_map ().samples_to_tick (
+          units::precise_sample_t (start_position));
+        return creator_ptr->create_audio_clip_for_slot_recording (
+          initial_frames,
+          utils::Utf8String::from_qstring (
+            QObject::tr ("Recording %1").arg (track->name ())),
+          start_ticks.asQuantity ());
+      },
+      .slot_midi_clip =
+        [creator_ptr = QPointer<actions::ArrangerObjectCreator> (
+           arranger_object_creator_.get ()),
+         project_ptr = QPointer<structure::project::Project> (project_.get ())] (
+          structure::tracks::TrackUuid, units::sample_t start_position)
+        -> std::optional<structure::arrangement::ArrangerObjectUuidReference> {
+        if (creator_ptr.isNull () || project_ptr.isNull ())
+          return std::nullopt;
+        const auto start_ticks = project_ptr->tempo_map ().samples_to_tick (
+          units::precise_sample_t (start_position));
+        return creator_ptr->create_midi_clip_for_slot_recording (
+          start_ticks.asQuantity ());
+      },
     },
     [&settings = app_settings_] () {
       using controllers::recording::RecordingMode;

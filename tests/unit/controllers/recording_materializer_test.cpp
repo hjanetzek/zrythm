@@ -187,9 +187,41 @@ protected:
           },
         .chord_object =
           [] (structure::arrangement::ChordClip &, units::sample_t, int) { },
+        .slot_audio_clip =
+          [this] (
+            TrackUuid track_id, units::sample_t start_position,
+            const utils::audio::AudioBuffer &initial_frames) {
+            slot_clip_create_count_++;
+            return create_recording_clip (
+              track_id, start_position, initial_frames);
+          },
+        .slot_midi_clip = [this] (TrackUuid, units::sample_t start_position)
+          -> std::optional<structure::arrangement::ArrangerObjectUuidReference> {
+          slot_clip_create_count_++;
+          auto clip_ref = utils::create_object<structure::arrangement::MidiClip> (
+            registry_, *tempo_map_wrapper_, registry_);
+          clip_ref.get ()->position ()->setTicks (
+            tempo_map_->samples_to_tick (start_position).asDouble ());
+          midi_clip_refs_.push_back (clip_ref);
+          return clip_ref;
+        },
       },
       [mode] () { return mode; });
   }
+
+  // Starts a clip slot recording that collects the attached clips
+  void begin_slot_recording (TrackUuid track_id, units::sample_t start)
+  {
+    ASSERT_TRUE (materializer_->begin_clip_slot_recording (
+      track_id, start,
+      [this] (structure::arrangement::ArrangerObjectUuidReference clip_ref) {
+        attached_slot_clips_.push_back (std::move (clip_ref));
+      }));
+  }
+
+  int slot_clip_create_count_ = 0;
+  std::vector<structure::arrangement::ArrangerObjectUuidReference>
+    attached_slot_clips_;
 
   void create_chord_materializer (
     controllers::recording::RecordingMode mode =
@@ -1804,6 +1836,232 @@ TEST_F (RecordingMaterializerTest, ChordDiscontinuityCreatesNewClip)
   ASSERT_EQ (chord_object_creations_.size (), 2u);
   EXPECT_NE (chord_object_creations_[0].clip, chord_object_creations_[1].clip)
     << "ChordObjects should be in different clips";
+}
+
+// ============================================================================
+// Clip slot recording
+// ============================================================================
+
+namespace
+{
+struct SlotFinish
+{
+  TrackUuid                      track_id;
+  structure::arrangement::Clip * clip;
+};
+}
+
+class RecordingMaterializerSlotTest : public RecordingMaterializerTest
+{
+protected:
+  void SetUp () override
+  {
+    RecordingMaterializerTest::SetUp ();
+    create_materializer ();
+    QObject::connect (
+      materializer_.get (), &RecordingMaterializer::clipSlotRecordingFinished,
+      materializer_.get (),
+      [this] (TrackUuid track_id, structure::arrangement::Clip * clip) {
+        finishes_.push_back ({ track_id, clip });
+      });
+  }
+
+  void TearDown () override
+  {
+    // The references must go before the registry they point into
+    materializer_.reset ();
+    attached_slot_clips_.clear ();
+    RecordingMaterializerTest::TearDown ();
+  }
+
+  structure::arrangement::AudioClip * slot_audio_clip () const
+  {
+    return attached_slot_clips_.empty ()
+             ? nullptr
+             : attached_slot_clips_.front ()
+                 .get_object_as<structure::arrangement::AudioClip> ();
+  }
+
+  double ticks_of (int64_t samples) const
+  {
+    return tempo_map_->samples_to_tick (units::samples (samples)).asDouble ();
+  }
+
+  std::vector<SlotFinish> finishes_;
+};
+
+TEST_F (RecordingMaterializerSlotTest, RecordsWindowWithoutTransportRecording)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (512));
+
+  for (const auto position : { 0, 256, 512, 768 })
+    write_and_drain (track_id, units::samples (position), false);
+
+  EXPECT_EQ (clip_create_count_, 0) << "No timeline clip";
+  ASSERT_EQ (slot_clip_create_count_, 1);
+  ASSERT_EQ (attached_slot_clips_.size (), 1u);
+  auto * clip = slot_audio_clip ();
+  ASSERT_NE (clip, nullptr);
+  EXPECT_DOUBLE_EQ (clip->position ()->ticks (), ticks_of (512));
+  EXPECT_EQ (
+    get_audio_source_for_clip (clip)->get_num_frames (), units::samples (512));
+  EXPECT_FALSE (undo_stack_->macroActive ())
+    << "Clip slot recordings do not open the recording macro";
+  EXPECT_TRUE (finishes_.empty ());
+}
+
+TEST_F (RecordingMaterializerSlotTest, RecordsOnlyThePartOfAPacketInsideTheWindow)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (100));
+
+  write_and_drain (track_id, units::samples (0), true);
+
+  auto * clip = slot_audio_clip ();
+  ASSERT_NE (clip, nullptr);
+  EXPECT_DOUBLE_EQ (clip->position ()->ticks (), ticks_of (100));
+  EXPECT_EQ (
+    get_audio_source_for_clip (clip)->get_num_frames (), units::samples (156));
+}
+
+TEST_F (RecordingMaterializerSlotTest, EndInThePastFinishesRightAway)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (0));
+  write_and_drain (track_id, units::samples (0), false);
+  write_and_drain (track_id, units::samples (256), false);
+
+  materializer_->end_clip_slot_recording (track_id, units::samples (384));
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  EXPECT_EQ (finishes_[0].track_id, track_id);
+  auto * clip = slot_audio_clip ();
+  EXPECT_EQ (finishes_[0].clip, clip);
+  EXPECT_DOUBLE_EQ (clip->position ()->ticks (), 0.0);
+  EXPECT_DOUBLE_EQ (clip->length ()->ticks (), ticks_of (384));
+  EXPECT_DOUBLE_EQ (clip->loopEndPosition ()->ticks (), ticks_of (384));
+  EXPECT_DOUBLE_EQ (clip->loopStartPosition ()->ticks (), 0.0);
+  EXPECT_FALSE (materializer_->is_recording_into_clip_slot (track_id));
+}
+
+TEST_F (RecordingMaterializerSlotTest, EndInTheFutureCutsTheLastPacket)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (0));
+  materializer_->end_clip_slot_recording (track_id, units::samples (300));
+
+  write_and_drain (track_id, units::samples (0), false);
+  EXPECT_TRUE (finishes_.empty ());
+  write_and_drain (track_id, units::samples (256), false);
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  auto * clip = slot_audio_clip ();
+  EXPECT_EQ (
+    get_audio_source_for_clip (clip)->get_num_frames (), units::samples (300));
+  EXPECT_DOUBLE_EQ (clip->length ()->ticks (), ticks_of (300));
+
+  // Later packets go nowhere
+  write_and_drain (track_id, units::samples (512), false);
+  EXPECT_EQ (slot_clip_create_count_, 1);
+  EXPECT_EQ (clip_create_count_, 0);
+}
+
+TEST_F (RecordingMaterializerSlotTest, GapEndsTheRecording)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (0));
+  write_and_drain (track_id, units::samples (0), false);
+
+  // The transport jumped (e.g. a loop)
+  write_and_drain (track_id, units::samples (4096), false);
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  EXPECT_DOUBLE_EQ (slot_audio_clip ()->length ()->ticks (), ticks_of (256));
+  EXPECT_EQ (slot_clip_create_count_, 1);
+}
+
+TEST_F (RecordingMaterializerSlotTest, SessionEndFinishesTheRecording)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (0));
+  write_and_drain (track_id, units::samples (0), false);
+
+  coordinator_->disarm_track (track_id);
+  coordinator_->process_pending ();
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  EXPECT_DOUBLE_EQ (slot_audio_clip ()->length ()->ticks (), ticks_of (256));
+}
+
+TEST_F (RecordingMaterializerSlotTest, NothingRecordedFinishesWithoutClip)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Audio);
+  begin_slot_recording (track_id, units::samples (1024));
+  write_and_drain (track_id, units::samples (0), false);
+
+  materializer_->end_clip_slot_recording (track_id, units::samples (2048));
+  coordinator_->disarm_track (track_id);
+  coordinator_->process_pending ();
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  EXPECT_EQ (finishes_[0].clip, nullptr);
+  EXPECT_EQ (slot_clip_create_count_, 0);
+}
+
+TEST_F (RecordingMaterializerSlotTest, SecondRecordingOnSameTrackIsRefused)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  begin_slot_recording (track_id, units::samples (0));
+  EXPECT_FALSE (materializer_->begin_clip_slot_recording (
+    track_id, units::samples (0), [] (auto) { }));
+}
+
+TEST_F (RecordingMaterializerSlotTest, MidiRecordsNotesInsideTheWindow)
+{
+  auto track_id = TrackUuid (QUuid::createUuid ());
+  coordinator_->arm_track (track_id, units::samples (256), SessionType::Midi);
+  begin_slot_recording (track_id, units::samples (256));
+  materializer_->end_clip_slot_recording (track_id, units::samples (768));
+
+  // A note before the window is not recorded
+  auto before = dsp::MidiEventBuffer::make_reserved ();
+  {
+    const auto ev =
+      dsp::midi_event::make_note_on (0, 50, 100, units::samples (10u));
+    before.push_back (ev.time_, ev.data ());
+  }
+  write_midi_and_drain (track_id, units::samples (0), false, before);
+
+  // A note starting 10 samples into the window, never released
+  auto inside = dsp::MidiEventBuffer::make_reserved ();
+  {
+    const auto ev =
+      dsp::midi_event::make_note_on (0, 60, 100, units::samples (10u));
+    inside.push_back (ev.time_, ev.data ());
+  }
+  write_midi_and_drain (track_id, units::samples (256), false, inside);
+  write_midi_and_drain (
+    track_id, units::samples (512), false,
+    dsp::MidiEventBuffer::make_reserved ());
+
+  ASSERT_EQ (finishes_.size (), 1u);
+  ASSERT_EQ (midi_note_creations_.size (), 1u);
+  EXPECT_EQ (midi_note_creations_[0].pitch, 60);
+  // Clip-relative: the clip starts at the window start
+  EXPECT_EQ (midi_note_creations_[0].start_position, units::samples (10));
+  EXPECT_EQ (midi_note_creations_[0].end_position, units::samples (512));
+  EXPECT_EQ (midi_clip_create_count_, 0) << "No timeline clip";
+  ASSERT_NE (finishes_[0].clip, nullptr);
+  EXPECT_DOUBLE_EQ (finishes_[0].clip->position ()->ticks (), 0.0);
+  EXPECT_DOUBLE_EQ (finishes_[0].clip->length ()->ticks (), ticks_of (512));
 }
 
 }

@@ -565,6 +565,27 @@ ArrangerObjectCreator::add_audio_clip_for_recording (
 }
 
 structure::arrangement::ArrangerObjectUuidReference
+ArrangerObjectCreator::create_audio_clip_for_slot_recording (
+  const utils::audio::AudioBuffer &initial_frames,
+  const utils::Utf8String         &clip_name,
+  units::precise_tick_t            start_ticks)
+{
+  return arranger_object_factory_.create_audio_clip_from_audio_buffer (
+    initial_frames, utils::audio::BitDepth::BIT_DEPTH_32, clip_name,
+    start_ticks);
+}
+
+structure::arrangement::ArrangerObjectUuidReference
+ArrangerObjectCreator::create_midi_clip_for_slot_recording (
+  units::precise_tick_t start_ticks)
+{
+  return arranger_object_factory_
+    .get_builder<structure::arrangement::MidiClip> ()
+    .with_start_ticks (start_ticks)
+    .build_in_registry ();
+}
+
+structure::arrangement::ArrangerObjectUuidReference
 ArrangerObjectCreator::add_midi_clip_for_recording (
   structure::tracks::Track     &track,
   structure::tracks::TrackLane &lane,

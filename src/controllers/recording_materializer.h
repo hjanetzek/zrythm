@@ -121,7 +121,36 @@ public:
       units::sample_t                    start_position,
       int                                note_number)>
       chord_object;
+
+    /**
+     * @brief Creates an AudioClip for a clip slot recording, not attached to
+     * a lane, positioned at @p start_position.
+     *
+     * May be unset when clip slot recording is not supported.
+     */
+    std::function<std::optional<
+      structure::arrangement::ArrangerObjectUuidReference> (
+      structure::tracks::TrackUuid     track_id,
+      units::sample_t                  start_position,
+      const utils::audio::AudioBuffer &initial_frames)>
+      slot_audio_clip;
+
+    /**
+     * @brief Creates an empty MidiClip for a clip slot recording, not
+     * attached to a lane, positioned at @p start_position.
+     *
+     * May be unset when clip slot recording is not supported.
+     */
+    std::function<std::optional<
+      structure::arrangement::ArrangerObjectUuidReference> (
+      structure::tracks::TrackUuid track_id,
+      units::sample_t              start_position)>
+      slot_midi_clip;
   };
+
+  /** Attaches the clip created for a clip slot recording to its slot. */
+  using AttachClipFunc =
+    std::function<void (structure::arrangement::ArrangerObjectUuidReference)>;
 
   explicit RecordingMaterializer (
     RecordingCoordinator  &recording_coordinator,
@@ -133,6 +162,52 @@ public:
   ~RecordingMaterializer () override;
 
   Q_DISABLE_COPY_MOVE (RecordingMaterializer)
+
+  /**
+   * @brief Records the track's input from @p start_position into a new clip
+   * that @p attach_clip puts into a clip slot.
+   *
+   * Recording is independent of the transport's record button and replaces
+   * timeline recording for the track while it runs. It ends at the position
+   * given to end_clip_slot_recording(), at a gap in the recorded data (e.g.
+   * a transport loop), or when the recording session ends; then
+   * clipSlotRecordingFinished() is emitted. The finished clip starts at
+   * position 0 and loops over its recorded length.
+   *
+   * @return False (with a warning) if the slot clip creators are not set or
+   * the track already records into a clip slot.
+   */
+  bool begin_clip_slot_recording (
+    structure::tracks::TrackUuid track_id,
+    units::sample_t              start_position,
+    AttachClipFunc               attach_clip);
+
+  /**
+   * @brief Ends the track's clip slot recording at @p end_position.
+   *
+   * Data recorded past @p end_position is cut off. Does nothing if the
+   * track does not record into a clip slot.
+   */
+  void end_clip_slot_recording (
+    structure::tracks::TrackUuid track_id,
+    units::sample_t              end_position);
+
+  /**
+   * @brief Whether the track currently records into a clip slot.
+   */
+  bool is_recording_into_clip_slot (structure::tracks::TrackUuid track_id) const
+  {
+    return slot_states_.contains (track_id);
+  }
+
+  /**
+   * @brief Emitted when a clip slot recording ends.
+   *
+   * @param clip The recorded clip, or nullptr if nothing was recorded.
+   */
+  Q_SIGNAL void clipSlotRecordingFinished (
+    structure::tracks::TrackUuid   track_id,
+    structure::arrangement::Clip * clip);
 
 private:
   /**
@@ -164,12 +239,71 @@ private:
      * (supports repeated note-ons on the same pitch before note-off).
      */
     std::unordered_map<uint16_t, std::deque<PendingNote>> unended_notes;
+
+    /** Recording window and slot of a clip slot recording. */
+    struct SlotTarget
+    {
+      units::sample_t                start_position;
+      std::optional<units::sample_t> end_position;
+      AttachClipFunc                 attach_clip;
+    };
+
+    /** Set when this state records into a clip slot. */
+    std::optional<SlotTarget> slot_target;
   };
 
   /** Handles RecordingCoordinator::audioDataReady signal. */
   void on_audio_data_ready (
     structure::tracks::TrackUuid             track_id,
     const std::vector<RecordingAudioPacket> &packets);
+
+  /** Adds one audio packet to the state's current clip. */
+  void materialize_audio_packet (
+    TrackRecordingState         &state,
+    structure::tracks::TrackUuid track_id,
+    const RecordingAudioPacket  &packet);
+
+  /** Adds one MIDI packet to the state's current clip. */
+  void materialize_midi_packet (
+    TrackRecordingState         &state,
+    structure::tracks::TrackUuid track_id,
+    const RecordingMidiPacket   &packet);
+
+  /**
+   * @brief Part of [@p packet_start, @p packet_start + @p nframes) inside a
+   * clip slot recording window, or nullopt if none.
+   */
+  static std::optional<std::pair<units::sample_t, units::sample_t>>
+  slot_window_overlap (
+    const TrackRecordingState::SlotTarget &target,
+    units::sample_t                        packet_start,
+    units::sample_t                        nframes);
+
+  /**
+   * @brief Whether a packet starting at @p packet_start continues the
+   * state's recording without a gap.
+   */
+  static bool continues_recording (
+    const TrackRecordingState &state,
+    units::sample_t            packet_start)
+  {
+    return !state.last_end_position.has_value ()
+           || packet_start == *state.last_end_position;
+  }
+
+  /**
+   * @brief Finishes the track's clip slot recording at @p end_position (or
+   * where the recorded data ends) and emits clipSlotRecordingFinished().
+   */
+  void finish_clip_slot_recording (
+    structure::tracks::TrackUuid   track_id,
+    std::optional<units::sample_t> end_position);
+
+  /** Finishes the clip slot recording if its window ends at or before
+   * @p position. */
+  void finish_clip_slot_recording_if_past_end (
+    structure::tracks::TrackUuid track_id,
+    units::sample_t              position);
 
   /** Creates a new AudioClip or returns the existing one for this track. */
   std::optional<structure::arrangement::ArrangerObjectUuidReference>
@@ -233,6 +367,13 @@ private:
   /** Per-track recording state, populated on first packet for each track. */
   std::unordered_map<structure::tracks::TrackUuid, TrackRecordingState>
     track_states_;
+
+  /**
+   * Per-track state of clip slot recordings. Kept apart from track_states_,
+   * which is cleared when a timeline recording take ends.
+   */
+  std::unordered_map<structure::tracks::TrackUuid, TrackRecordingState>
+    slot_states_;
 
   /**
    * Pre-allocated scratch buffer reused across on_audio_data_ready()
