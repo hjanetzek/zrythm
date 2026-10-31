@@ -115,6 +115,12 @@ public:
   setSceneColor (structure::scenes::Scene * scene, const QColor &color);
 
   /**
+   * @brief Sets the clip launcher's default launch quantization (undoable).
+   */
+  Q_INVOKABLE void
+  setLaunchQuantization (structure::tracks::ClipQuantizeOption quantization);
+
+  /**
    * @brief Removes the color of @p scene.
    */
   Q_INVOKABLE void unsetSceneColor (structure::scenes::Scene * scene)

@@ -91,7 +91,7 @@ Item {
     MenuItem {
       text: qsTr("Stop Scene")
 
-      onTriggered: root.clipPlaybackService.stopScene(root.editedScene)
+      onTriggered: root.clipPlaybackService.stopScene(root.editedScene, root.clipLauncher.launchQuantization)
     }
 
     MenuItem {
@@ -199,10 +199,56 @@ Item {
     ToolButton {
       icon.source: root.stopIconSource
 
-      onClicked: root.clipPlaybackService.stopAllClips()
+      onClicked: root.clipPlaybackService.stopAllClips(root.clipLauncher.launchQuantization)
 
       ToolTip {
         text: qsTr("Stop Scenes")
+      }
+    }
+
+    ComboBox {
+      id: launchQuantizationComboBox
+
+      Layout.preferredHeight: root.rulerHeight
+      currentIndex: launchQuantizationComboBox.indexOfValue(root.clipLauncher.launchQuantization)
+      textRole: "text"
+      valueRole: "value"
+
+      model: [
+        {
+          text: qsTr("None"),
+          value: ClipSlot.ClipQuantizeOption.Immediate
+        },
+        {
+          text: qsTr("1 Bar"),
+          value: ClipSlot.ClipQuantizeOption.NextBar
+        },
+        {
+          text: qsTr("1 Beat"),
+          value: ClipSlot.ClipQuantizeOption.NextBeat
+        },
+        {
+          text: qsTr("1/4"),
+          value: ClipSlot.ClipQuantizeOption.NextQuarterNote
+        },
+        {
+          text: qsTr("1/8"),
+          value: ClipSlot.ClipQuantizeOption.NextEighthNote
+        },
+        {
+          text: qsTr("1/16"),
+          value: ClipSlot.ClipQuantizeOption.NextSixteenthNote
+        },
+        {
+          text: qsTr("1/32"),
+          value: ClipSlot.ClipQuantizeOption.NextThirtySecondNote
+        }
+      ]
+
+      onActivated: sceneOperator.setLaunchQuantization(launchQuantizationComboBox.currentValue)
+
+      ToolTip {
+        text: qsTr("Launch Quantization")
       }
     }
 
@@ -249,7 +295,7 @@ Item {
 
                 icon.source: root.playIconSource
 
-                onClicked: root.clipPlaybackService.launchScene(sceneHeaderRow.scene)
+                onClicked: root.clipPlaybackService.launchScene(sceneHeaderRow.scene, root.clipLauncher.launchQuantization)
 
                 ToolTip {
                   text: qsTr("Play Scene")
@@ -484,6 +530,7 @@ Item {
       clipPlaybackService: root.clipPlaybackService
       clipSlot: clipSlotsListView.scene.clipSlots.clipSlotForTrack(track)
       height: track.fullVisibleHeight
+      launchQuantization: root.clipLauncher.launchQuantization
       objectCreator: root.objectCreator
       scene: clipSlotsListView.scene
       width: root.sceneWidth
@@ -507,7 +554,7 @@ Item {
       icon.source: root.stopIconSource
       implicitHeight: trackStopButton.track.fullVisibleHeight
 
-      onClicked: root.clipPlaybackService.stopTrackClips(trackStopButton.track)
+      onClicked: root.clipPlaybackService.stopTrackClips(trackStopButton.track, root.clipLauncher.launchQuantization)
 
       ToolTip {
         text: qsTr("Stop %1").arg(trackStopButton.track.name)

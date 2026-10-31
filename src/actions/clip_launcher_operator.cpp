@@ -106,6 +106,21 @@ ClipLauncherOperator::moveScene (structure::scenes::Scene * scene, int toIndex)
 }
 
 void
+ClipLauncherOperator::setLaunchQuantization (
+  structure::tracks::ClipQuantizeOption quantization)
+{
+  if (!can_operate () || clip_launcher_->launchQuantization () == quantization)
+    return;
+
+  undo_stack_->push (
+    std::make_unique<commands::ChangeQObjectPropertyCommand> (
+      *clip_launcher_, QStringLiteral ("launchQuantization"),
+      QVariant::fromValue (quantization),
+      commands::Command::EngineRequirement::None,
+      QObject::tr ("Change Launch Quantization")));
+}
+
+void
 ClipLauncherOperator::renameScene (
   structure::scenes::Scene * scene,
   const QString             &name)

@@ -12,6 +12,8 @@ Control {
 
   required property ClipPlaybackService clipPlaybackService
   required property ClipSlot clipSlot
+  // Quantization of the slot's launch/stop button (a ClipQuantizeOption)
+  required property int launchQuantization
   required property ArrangerObjectCreator objectCreator
   readonly property ArrangerObject clipObject: clipSlot.clipObject
   required property Scene scene
@@ -63,6 +65,7 @@ Control {
       clipPlaybackService: root.clipPlaybackService
       clipSlot: root.clipSlot
       enabled: root.clipObject !== null
+      launchQuantization: root.launchQuantization
       track: root.track
 
       anchors {

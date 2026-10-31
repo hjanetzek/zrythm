@@ -166,6 +166,24 @@ TEST_F (ClipLauncherOperatorTest, RenameAndColorSceneUndoRedo)
   EXPECT_EQ (scene->name (), QStringLiteral ("Verse"));
 }
 
+TEST_F (ClipLauncherOperatorTest, SetLaunchQuantizationUndoRedo)
+{
+  operator_->setLaunchQuantization (
+    structure::tracks::ClipQuantizeOption::NextBeat);
+  EXPECT_EQ (
+    clip_launcher_->launchQuantization (),
+    structure::tracks::ClipQuantizeOption::NextBeat);
+
+  undo_stack_->undo ();
+  EXPECT_EQ (
+    clip_launcher_->launchQuantization (),
+    structure::tracks::ClipQuantizeOption::NextBar);
+  undo_stack_->redo ();
+  EXPECT_EQ (
+    clip_launcher_->launchQuantization (),
+    structure::tracks::ClipQuantizeOption::NextBeat);
+}
+
 TEST_F (ClipLauncherOperatorTest, OperationsWithoutTargetAreRefused)
 {
   // Scene that is not part of the clip launcher

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-ZrythmLicense
 
 #include "structure/scenes/clip_launcher.h"
+#include "utils/exceptions.h"
 
+#include <magic_enum/magic_enum.hpp>
 #include <nlohmann/json.hpp>
 
 namespace zrythm::structure::scenes
@@ -31,6 +33,16 @@ ClipLauncher::create_scene () const
   return utils::make_qobject_unique<Scene> (registry_, track_collection_);
 }
 
+void
+ClipLauncher::setLaunchQuantization (tracks::ClipQuantizeOption quantization)
+{
+  if (launch_quantization_ != quantization)
+    {
+      launch_quantization_ = quantization;
+      Q_EMIT launchQuantizationChanged ();
+    }
+}
+
 // ============================================================================
 // Serialization
 // ============================================================================
@@ -39,6 +51,8 @@ void
 to_json (nlohmann::json &j, const ClipLauncher &launcher)
 {
   j[ClipLauncher::kScenesKey] = *launcher.scene_list_;
+  j[ClipLauncher::kLaunchQuantizationKey] =
+    magic_enum::enum_name (launcher.launch_quantization_);
 }
 
 void
@@ -47,6 +61,19 @@ from_json (const nlohmann::json &j, ClipLauncher &launcher)
   if (j.contains (ClipLauncher::kScenesKey))
     {
       j.at (ClipLauncher::kScenesKey).get_to (*launcher.scene_list_);
+    }
+  if (j.contains (ClipLauncher::kLaunchQuantizationKey))
+    {
+      const auto name =
+        j.at (ClipLauncher::kLaunchQuantizationKey).get<std::string> ();
+      const auto quantization =
+        magic_enum::enum_cast<tracks::ClipQuantizeOption> (name);
+      if (!quantization.has_value ())
+        {
+          throw ZrythmException (
+            fmt::format ("unknown clip launch quantization '{}'", name));
+        }
+      launcher.setLaunchQuantization (*quantization);
     }
 }
 

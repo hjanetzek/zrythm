@@ -31,13 +31,18 @@ public:
    * @param engine_requirement Engine cooperation this change needs: pass
    * PauseProcessing when the property affects the tempo map, None
    * otherwise.
+   * @param text Text of the command in the undo history; empty for
+   * "Change <property_name>".
    */
   ChangeQObjectPropertyCommand (
     QObject          &object,
     QString           property_name,
     QVariant          value,
-    EngineRequirement engine_requirement)
-      : Command (QObject::tr ("Change %1").arg (property_name), engine_requirement),
+    EngineRequirement engine_requirement,
+    const QString    &text = {})
+      : Command (
+          text.isEmpty () ? QObject::tr ("Change %1").arg (property_name) : text,
+          engine_requirement),
         object_ (object), property_name_ (property_name),
         original_value_ (object.property (property_name.toLatin1 ().data ())),
         value_ (std::move (value))

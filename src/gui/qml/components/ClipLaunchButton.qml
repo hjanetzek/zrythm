@@ -10,6 +10,8 @@ ToolButton {
 
   required property ClipPlaybackService clipPlaybackService
   required property ClipSlot clipSlot
+  // Quantization of the default launch/stop action (a ClipQuantizeOption)
+  required property int launchQuantization
   readonly property bool shouldAnimate: root.clipSlot.state === ClipSlot.StopQueued || root.clipSlot.state === ClipSlot.PlayQueued
   property bool showQuantizationMenu: true
   required property Track track
@@ -18,11 +20,11 @@ ToolButton {
     switch (root.clipSlot.state) {
     case ClipSlot.Stopped:
     case ClipSlot.StopQueued:
-      root.clipPlaybackService.launchClip(root.track, root.clipSlot);
+      root.clipPlaybackService.launchClip(root.track, root.clipSlot, root.launchQuantization);
       break;
     case ClipSlot.Playing:
     case ClipSlot.PlayQueued:
-      root.clipPlaybackService.stopClip(root.track, root.clipSlot);
+      root.clipPlaybackService.stopClip(root.track, root.clipSlot, root.launchQuantization);
       break;
     }
   }

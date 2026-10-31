@@ -387,6 +387,19 @@
               "items": {
                 "$ref": "common.schema.json#/definitions/scene"
               }
+            },
+            "launchQuantization": {
+              "type": "string",
+              "enum": [
+                "Immediate",
+                "NextBar",
+                "NextBeat",
+                "NextQuarterNote",
+                "NextEighthNote",
+                "NextSixteenthNote",
+                "NextThirtySecondNote"
+              ],
+              "description": "Quantization for launching and stopping clips and scenes when none is chosen explicitly"
             }
           }
         },

@@ -3,6 +3,7 @@
 
 #include "structure/scenes/clip_launcher.h"
 #include "structure/tracks/track_collection.h"
+#include "utils/exceptions.h"
 #include "utils/object_registry.h"
 #include "utils/registry_utils.h"
 
@@ -11,6 +12,7 @@
 
 #include "unit/dsp/graph_helpers.h"
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 namespace zrythm::structure::scenes
 {
@@ -200,6 +202,44 @@ TEST_F (ClipLauncherTest, SceneListDataAccess)
   auto invalidData =
     clip_launcher_->scenes ()->data (invalidIndex, SceneList::ScenePtrRole);
   EXPECT_FALSE (invalidData.isValid ());
+}
+
+TEST_F (ClipLauncherTest, LaunchQuantizationDefaultsToNextBar)
+{
+  EXPECT_EQ (
+    clip_launcher_->launchQuantization (), tracks::ClipQuantizeOption::NextBar);
+}
+
+TEST_F (ClipLauncherTest, LaunchQuantizationSerializationRoundTrip)
+{
+  clip_launcher_->setLaunchQuantization (
+    tracks::ClipQuantizeOption::NextSixteenthNote);
+  nlohmann::json j = *clip_launcher_;
+  EXPECT_EQ (
+    j.at ("launchQuantization").get<std::string> (), "NextSixteenthNote");
+
+  ClipLauncher loaded (*registry_, *track_collection_);
+  j.get_to (loaded);
+  EXPECT_EQ (
+    loaded.launchQuantization (), tracks::ClipQuantizeOption::NextSixteenthNote);
+}
+
+TEST_F (ClipLauncherTest, LaunchQuantizationMissingFromJsonKeepsDefault)
+{
+  const nlohmann::json j = {
+    { "scenes", nlohmann::json::array () }
+  };
+  j.get_to (*clip_launcher_);
+  EXPECT_EQ (
+    clip_launcher_->launchQuantization (), tracks::ClipQuantizeOption::NextBar);
+}
+
+TEST_F (ClipLauncherTest, UnknownLaunchQuantizationInJsonIsRefused)
+{
+  const nlohmann::json j = {
+    { "launchQuantization", "NextTuesday" }
+  };
+  EXPECT_THROW (j.get_to (*clip_launcher_), ZrythmException);
 }
 
 } // namespace zrythm::structure::scenes

@@ -137,6 +137,8 @@ graph LR
     Point --> Stop[Stop Clip]
 ```
 
+The clip launcher holds a default launch quantization (saved with the project). Launching or stopping clips and scenes from the launcher uses it unless an option is chosen explicitly, e.g. from a slot's launch menu.
+
 A quantized stop is queued like a launch of silence: the playing clip continues until the quantization point, and a launch issued before then replaces the stop.
 
 ## Event Processing Architecture
