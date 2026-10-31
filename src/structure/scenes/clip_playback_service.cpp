@@ -414,6 +414,14 @@ ClipPlaybackService::scheduleClipLaunch (
   // Start monitoring for the actual playback state change
   startPlaybackStateMonitor ();
 
+  // Launched clips play once the transport rolls
+  if (
+    transport_ != nullptr
+    && transport_->getPlayState () != dsp::ITransport::PlayState::Rolling)
+    {
+      transport_->requestRoll ();
+    }
+
   // Emit signal
   Q_EMIT clipLaunched (track, clipSlot);
 }

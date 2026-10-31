@@ -185,6 +185,8 @@ Project::Project (
           return juce_hw ? juce_hw->get_device_audio_workgroup () : std::nullopt;
         }())
 {
+  clip_playback_service_->set_transport (transport_.get ());
+
   project_registry_.set_deserialization_dependencies (
     {
       *track_factory_,

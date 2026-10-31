@@ -21,6 +21,9 @@
 namespace zrythm::structure::tracks
 {
 
+// Clip playback in these tests runs with a rolling transport
+constexpr auto kRolling = dsp::ITransport::PlayState::Rolling;
+
 class ClipPlaybackDataProviderTest : public ::testing::Test
 {
 protected:
@@ -302,7 +305,7 @@ TEST_F (ClipPlaybackDataProviderTest, InitialState)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_EQ (output_buffer.size (), 0);
 }
 
@@ -319,7 +322,7 @@ TEST_F (ClipPlaybackDataProviderTest, GenerateEventsWithMidiClip)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have at least one event (the note on)
   EXPECT_GE (output_buffer.size (), 1);
@@ -350,7 +353,7 @@ TEST_F (ClipPlaybackDataProviderTest, ClearEvents)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_GT (output_buffer.size (), 0);
 
   // Stop playback
@@ -359,7 +362,7 @@ TEST_F (ClipPlaybackDataProviderTest, ClearEvents)
 
   // Test processing events again - should have no events other than all notes off
   output_buffer.clear ();
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_EQ (output_buffer.size (), 16);
 }
 
@@ -388,7 +391,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizeOptions)
       auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
       dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-      provider_->process_midi_events (time_info, output_buffer);
+      provider_->process_midi_events (time_info, kRolling, output_buffer);
 
       // Should have events (quantize option doesn't affect the presence of
       // events, just when they start playing)
@@ -426,14 +429,14 @@ TEST_F (ClipPlaybackDataProviderTest, NoteValueQuantizationStartsOnNextGridPoint
       // The block just before the grid point stays silent
       auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
       provider.process_midi_events (
-        create_time_info (grid_point - 132, 0, 32), output_buffer);
+        create_time_info (grid_point - 132, 0, 32), kRolling, output_buffer);
       EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ())
         << "grid " << grid_ticks;
 
       // The block containing it starts the clip on the grid point
       output_buffer.clear ();
       provider.process_midi_events (
-        create_time_info (grid_point - 100, 0, 256), output_buffer);
+        create_time_info (grid_point - 100, 0, 256), kRolling, output_buffer);
       const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
       ASSERT_EQ (pitch_60_events.size (), 1) << "grid " << grid_ticks;
       EXPECT_EQ (pitch_60_events[0], units::samples (100))
@@ -456,7 +459,7 @@ TEST_F (
       .in (units::sample));
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   provider_->process_midi_events (
-    create_time_info (grid_point, 0, 256), output_buffer);
+    create_time_info (grid_point, 0, 256), kRolling, output_buffer);
 
   const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
   ASSERT_EQ (pitch_60_events.size (), 1);
@@ -514,7 +517,7 @@ protected:
       {
         auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
         provider_->process_midi_events (
-          create_time_info (static_cast<uint64_t> (start), 0, block),
+          create_time_info (static_cast<uint64_t> (start), 0, block), kRolling,
           output_buffer);
         for (const auto &event : output_buffer)
           {
@@ -674,7 +677,8 @@ TEST_F (ClipPlaybackDataProviderLoopTest, AlignedLaunchStartsInsideTheClip)
     {
       auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
       provider_->process_midi_events (
-        create_time_info (static_cast<uint64_t> (start), 0, 256), output_buffer);
+        create_time_info (static_cast<uint64_t> (start), 0, 256), kRolling,
+        output_buffer);
       for (const auto &event : output_buffer)
         {
           if (utils::midi::midi_is_note_on (event.data ()))
@@ -710,11 +714,11 @@ TEST_F (ClipPlaybackDataProviderTest, AudioAlignedLaunchStartsInsideTheClip)
   std::vector<float> scratch_left (100, 0.0f);
   std::vector<float> scratch_right (100, 0.0f);
   reference_provider.process_audio_events (
-    create_time_info (0, 0, 100), scratch_left, scratch_right);
+    create_time_info (0, 0, 100), kRolling, scratch_left, scratch_right);
   std::vector<float> reference_left (256, 0.0f);
   std::vector<float> reference_right (256, 0.0f);
   reference_provider.process_audio_events (
-    create_time_info (100, 0, 256), reference_left, reference_right);
+    create_time_info (100, 0, 256), kRolling, reference_left, reference_right);
 
   // Launched at sample 100, aligned to sample 0
   provider_->generate_audio_events (
@@ -722,7 +726,7 @@ TEST_F (ClipPlaybackDataProviderTest, AudioAlignedLaunchStartsInsideTheClip)
   std::vector<float> output_left (256, 0.0f);
   std::vector<float> output_right (256, 0.0f);
   provider_->process_audio_events (
-    create_time_info (100, 0, 256), output_left, output_right);
+    create_time_info (100, 0, 256), kRolling, output_left, output_right);
 
   for (const auto i : std::views::iota (0uz, output_left.size ()))
     {
@@ -771,7 +775,7 @@ TEST_F (ClipPlaybackDataProviderTest, MultipleNotesInRegion)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have at least 3 events (the note ons)
   EXPECT_GE (output_buffer.size (), 3);
@@ -810,21 +814,21 @@ TEST_F (ClipPlaybackDataProviderTest, PreciseLoopingBehavior)
 
   // Process first buffer
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 1024);
-  provider_->process_midi_events (time_info1, output_buffer);
+  provider_->process_midi_events (time_info1, kRolling, output_buffer);
   auto first_loop_events = find_event_timestamps (output_buffer, 60);
   loop_events.push_back (first_loop_events);
 
   // Process second buffer that should include the loop
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (1024, 0, 2048);
   output_buffer.clear ();
-  provider_->process_midi_events (time_info2, output_buffer);
+  provider_->process_midi_events (time_info2, kRolling, output_buffer);
   auto second_loop_events = find_event_timestamps (output_buffer, 60);
   loop_events.push_back (second_loop_events);
 
   // Process third buffer that should include another loop
   dsp::graph::ProcessBlockInfo time_info3 = create_time_info (3072, 0, 2048);
   output_buffer.clear ();
-  provider_->process_midi_events (time_info3, output_buffer);
+  provider_->process_midi_events (time_info3, kRolling, output_buffer);
   auto third_loop_events = find_event_timestamps (output_buffer, 60);
   loop_events.push_back (third_loop_events);
 
@@ -871,7 +875,7 @@ TEST_F (ClipPlaybackDataProviderTest, PreciseEventTiming)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 4096);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Find events for each pitch
   auto pitch_60_events = find_event_timestamps (output_buffer, 60);
@@ -918,7 +922,7 @@ TEST_F (ClipPlaybackDataProviderTest, BarBoundaryQuantization)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (64, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have no events initially because we're waiting for the next bar
   EXPECT_EQ (output_buffer.size (), 0);
@@ -929,7 +933,7 @@ TEST_F (ClipPlaybackDataProviderTest, BarBoundaryQuantization)
   dsp::graph::ProcessBlockInfo bar_time_info = create_time_info (
     static_cast<uint64_t> (bar_start_samples.in (units::sample)), 0, 256);
 
-  provider_->process_midi_events (bar_time_info, output_buffer);
+  provider_->process_midi_events (bar_time_info, kRolling, output_buffer);
 
   // Should now have events because we're at the next bar
   EXPECT_GT (output_buffer.size (), 0);
@@ -949,7 +953,7 @@ TEST_F (ClipPlaybackDataProviderTest, BeatBoundaryQuantization)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (64, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have no events initially because we're waiting for the next beat
   EXPECT_EQ (output_buffer.size (), 0);
@@ -960,7 +964,7 @@ TEST_F (ClipPlaybackDataProviderTest, BeatBoundaryQuantization)
   dsp::graph::ProcessBlockInfo beat_time_info = create_time_info (
     static_cast<uint64_t> (beat_start_samples.in (units::sample)), 0, 256);
 
-  provider_->process_midi_events (beat_time_info, output_buffer);
+  provider_->process_midi_events (beat_time_info, kRolling, output_buffer);
 
   // Should now have events because we're at the next beat
   EXPECT_GT (output_buffer.size (), 0);
@@ -994,7 +998,7 @@ TEST_P (
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, buffer_size);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have events regardless of buffer size
   EXPECT_GT (output_buffer.size (), 0);
@@ -1040,7 +1044,7 @@ TEST_F (ClipPlaybackDataProviderTest, ProcessEventsWithOffset)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (10000, 100, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have events since we're using immediate quantization
   EXPECT_GT (output_buffer.size (), 0);
@@ -1069,7 +1073,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizationTimingAccuracy)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (64, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have no events initially because we're quantizing to the next beat
   EXPECT_EQ (output_buffer.size (), 0);
@@ -1081,7 +1085,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizationTimingAccuracy)
     static_cast<uint64_t> (beat_start_samples.in (units::sample)), 0, 256);
 
   output_buffer.clear ();
-  provider_->process_midi_events (beat_time_info, output_buffer);
+  provider_->process_midi_events (beat_time_info, kRolling, output_buffer);
 
   // Should now have events because we're at the next beat
   EXPECT_GT (output_buffer.size (), 0);
@@ -1112,7 +1116,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStartWithinBlockIsSampleAccurate)
 
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   provider_->process_midi_events (
-    create_time_info (block_start, 0, 256), output_buffer);
+    create_time_info (block_start, 0, 256), kRolling, output_buffer);
 
   const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
   ASSERT_EQ (pitch_60_events.size (), 1);
@@ -1135,7 +1139,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStartWithinBlockAddsBufferOffset)
 
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   provider_->process_midi_events (
-    create_time_info (block_start, 32, 128), output_buffer);
+    create_time_info (block_start, 32, 128), kRolling, output_buffer);
 
   const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
   ASSERT_EQ (pitch_60_events.size (), 1);
@@ -1156,13 +1160,13 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStartAtBlockEndStartsInNextBlock)
 
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   provider_->process_midi_events (
-    create_time_info (beat_start - 256, 0, 256), output_buffer);
+    create_time_info (beat_start - 256, 0, 256), kRolling, output_buffer);
   EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ());
   EXPECT_FALSE (provider_->playing ());
 
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start, 0, 256), output_buffer);
+    create_time_info (beat_start, 0, 256), kRolling, output_buffer);
   const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
   ASSERT_EQ (pitch_60_events.size (), 1);
   EXPECT_EQ (pitch_60_events[0], units::samples (0));
@@ -1185,7 +1189,7 @@ TEST_F (
   std::vector<float> output_left (256, 0.0f);
   std::vector<float> output_right (256, 0.0f);
   provider_->process_audio_events (
-    create_time_info (block_start, 0, 256), output_left, output_right);
+    create_time_info (block_start, 0, 256), kRolling, output_left, output_right);
 
   // Reference: the same clip launched immediately at a block start
   ClipPlaybackDataProvider reference_provider (*tempo_map_);
@@ -1194,7 +1198,7 @@ TEST_F (
   std::vector<float> reference_left (256, 0.0f);
   std::vector<float> reference_right (256, 0.0f);
   reference_provider.process_audio_events (
-    create_time_info (0, 0, 256), reference_left, reference_right);
+    create_time_info (0, 0, 256), kRolling, reference_left, reference_right);
 
   // Silence before the bar boundary, then the clip from its first sample
   for (const auto i : std::views::iota (0uz, 100uz))
@@ -1235,14 +1239,16 @@ TEST_F (
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
   ASSERT_EQ (find_event_timestamps (output_buffer, 60).size (), 1);
 
   // Clip B is queued for the next beat; A keeps playing until then
   provider_->generate_midi_events (
     *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
   output_buffer.clear ();
-  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (256, 0, 256), kRolling, output_buffer);
   EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
   EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
   EXPECT_TRUE (provider_->playing ());
@@ -1255,7 +1261,7 @@ TEST_F (
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start - 100, 0, 256), output_buffer);
+    create_time_info (beat_start - 100, 0, 256), kRolling, output_buffer);
 
   // A's notes are silenced and B starts, both on the beat
   const auto notes_off = all_notes_off_timestamps (output_buffer);
@@ -1285,7 +1291,8 @@ TEST_F (ClipPlaybackDataProviderTest, NewerQueuedClipReplacesEarlierQueuedClip)
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
 
   provider_->generate_midi_events (
     *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBar);
@@ -1298,7 +1305,7 @@ TEST_F (ClipPlaybackDataProviderTest, NewerQueuedClipReplacesEarlierQueuedClip)
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (bar_start - 10, 0, 256), output_buffer);
+    create_time_info (bar_start - 10, 0, 256), kRolling, output_buffer);
 
   EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
   const auto pitch_64_events = find_event_timestamps (output_buffer, 64);
@@ -1312,7 +1319,8 @@ TEST_F (ClipPlaybackDataProviderTest, CancelPendingLaunchKeepsPlayingClip)
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
 
   provider_->generate_midi_events (
     *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
@@ -1325,7 +1333,7 @@ TEST_F (ClipPlaybackDataProviderTest, CancelPendingLaunchKeepsPlayingClip)
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start - 100, 0, 256), output_buffer);
+    create_time_info (beat_start - 100, 0, 256), kRolling, output_buffer);
 
   EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
   EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
@@ -1338,7 +1346,8 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStopWaitsForQuantizationPoint)
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
 
   provider_->queue_stop_playback (
     structure::tracks::ClipQuantizeOption::NextBeat);
@@ -1346,7 +1355,8 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStopWaitsForQuantizationPoint)
 
   // The clip keeps playing until the beat boundary
   output_buffer.clear ();
-  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (256, 0, 256), kRolling, output_buffer);
   EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
   EXPECT_TRUE (provider_->playing ());
 
@@ -1357,7 +1367,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStopWaitsForQuantizationPoint)
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start - 100, 0, 256), output_buffer);
+    create_time_info (beat_start - 100, 0, 256), kRolling, output_buffer);
 
   const auto notes_off = all_notes_off_timestamps (output_buffer);
   ASSERT_EQ (notes_off.size (), 16);
@@ -1370,7 +1380,7 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizedStopWaitsForQuantizationPoint)
   // Nothing plays afterwards
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start + 156, 0, 256), output_buffer);
+    create_time_info (beat_start + 156, 0, 256), kRolling, output_buffer);
   EXPECT_EQ (output_buffer.size (), 0);
 }
 
@@ -1380,7 +1390,8 @@ TEST_F (ClipPlaybackDataProviderTest, LaunchReplacesQueuedStop)
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
 
   provider_->queue_stop_playback (
     structure::tracks::ClipQuantizeOption::NextBar);
@@ -1393,7 +1404,7 @@ TEST_F (ClipPlaybackDataProviderTest, LaunchReplacesQueuedStop)
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (bar_start - 10, 0, 256), output_buffer);
+    create_time_info (bar_start - 10, 0, 256), kRolling, output_buffer);
 
   const auto pitch_62_events = find_event_timestamps (output_buffer, 62);
   ASSERT_EQ (pitch_62_events.size (), 1);
@@ -1417,7 +1428,8 @@ TEST_F (
   std::vector<float> output_left (256, 0.0f);
   std::vector<float> output_right (256, 0.0f);
   provider_->process_audio_events (
-    create_time_info (beat_start - 300, 0, 256), output_left, output_right);
+    create_time_info (beat_start - 300, 0, 256), kRolling, output_left,
+    output_right);
 
   provider_->queue_stop_playback (
     structure::tracks::ClipQuantizeOption::NextBeat);
@@ -1426,7 +1438,8 @@ TEST_F (
   std::ranges::fill (output_left, 0.0f);
   std::ranges::fill (output_right, 0.0f);
   provider_->process_audio_events (
-    create_time_info (beat_start - 44, 0, 256), output_left, output_right);
+    create_time_info (beat_start - 44, 0, 256), kRolling, output_left,
+    output_right);
 
   for (const auto i : std::views::iota (0uz, 44uz))
     {
@@ -1441,13 +1454,92 @@ TEST_F (
   EXPECT_FALSE (provider_->playing ());
 }
 
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  PausedTransportReleasesNotesAndRendersNothing)
+{
+  constexpr auto kPaused = dsp::ITransport::PlayState::Paused;
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
+  ASSERT_EQ (find_event_timestamps (output_buffer, 60).size (), 1);
+
+  // Pausing releases held notes once
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (256, 0, 256), kPaused, output_buffer);
+  EXPECT_EQ (all_notes_off_timestamps (output_buffer).size (), 16);
+  EXPECT_EQ (output_buffer.size (), 16);
+  EXPECT_TRUE (provider_->playing ());
+
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (256, 0, 256), kPaused, output_buffer);
+  EXPECT_EQ (output_buffer.size (), 0);
+
+  // Resuming continues at the transport position: the clip's loop point
+  // is 10 samples into this block, where its first note plays again
+  const auto loop_end = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (400.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (loop_end - 10, 0, 256), kRolling, output_buffer);
+  const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+  ASSERT_EQ (pitch_60_events.size (), 1);
+  EXPECT_LE (abs (pitch_60_events[0].in<int64_t> (units::samples) - 10), 1);
+}
+
+TEST_F (ClipPlaybackDataProviderTest, AudioPausedTransportRendersSilence)
+{
+  provider_->generate_audio_events (
+    *create_simple_audio_clip (),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> output_left (256, 0.0f);
+  std::vector<float> output_right (256, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (0, 0, 256), dsp::ITransport::PlayState::Paused,
+    output_left, output_right);
+
+  EXPECT_TRUE (std::ranges::all_of (output_left, [] (float v) {
+    return v == 0.0f;
+  }));
+  EXPECT_TRUE (std::ranges::all_of (output_right, [] (float v) {
+    return v == 0.0f;
+  }));
+}
+
+TEST_F (ClipPlaybackDataProviderTest, QueuedLaunchWaitsWhileTransportIsPaused)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), dsp::ITransport::PlayState::Paused,
+    output_buffer);
+  EXPECT_EQ (output_buffer.size (), 0);
+  EXPECT_TRUE (provider_->launch_pending ());
+  EXPECT_FALSE (provider_->playing ());
+
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
+  EXPECT_FALSE (provider_->launch_pending ());
+  EXPECT_EQ (find_event_timestamps (output_buffer, 60).size (), 1);
+}
+
 TEST_F (ClipPlaybackDataProviderTest, StopDiscardsQueuedClip)
 {
   provider_->generate_midi_events (
     *create_simple_region (60),
     structure::tracks::ClipQuantizeOption::Immediate);
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
-  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (0, 0, 256), kRolling, output_buffer);
 
   provider_->generate_midi_events (
     *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
@@ -1457,7 +1549,8 @@ TEST_F (ClipPlaybackDataProviderTest, StopDiscardsQueuedClip)
 
   // The playing clip stops on the next block
   output_buffer.clear ();
-  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  provider_->process_midi_events (
+    create_time_info (256, 0, 256), kRolling, output_buffer);
   EXPECT_EQ (all_notes_off_timestamps (output_buffer).size (), 16);
   EXPECT_FALSE (provider_->playing ());
 
@@ -1468,7 +1561,7 @@ TEST_F (ClipPlaybackDataProviderTest, StopDiscardsQueuedClip)
       .in (units::sample));
   output_buffer.clear ();
   provider_->process_midi_events (
-    create_time_info (beat_start - 100, 0, 256), output_buffer);
+    create_time_info (beat_start - 100, 0, 256), kRolling, output_buffer);
   EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
   EXPECT_FALSE (provider_->playing ());
 }
@@ -1485,7 +1578,7 @@ TEST_F (
   std::vector<float> output_left (256, 0.0f);
   std::vector<float> output_right (256, 0.0f);
   provider_->process_audio_events (
-    create_time_info (0, 0, 256), output_left, output_right);
+    create_time_info (0, 0, 256), kRolling, output_left, output_right);
 
   provider_->generate_audio_events (
     *clip_b, structure::tracks::ClipQuantizeOption::NextBar);
@@ -1497,7 +1590,7 @@ TEST_F (
   std::vector<float> reference_left (256, 0.0f);
   std::vector<float> reference_right (256, 0.0f);
   reference_provider.process_audio_events (
-    create_time_info (0, 0, 256), reference_left, reference_right);
+    create_time_info (0, 0, 256), kRolling, reference_left, reference_right);
 
   // Block containing the bar boundary 100 samples after its start
   const auto bar_start = static_cast<uint64_t> (
@@ -1507,7 +1600,8 @@ TEST_F (
   std::ranges::fill (output_left, 0.0f);
   std::ranges::fill (output_right, 0.0f);
   provider_->process_audio_events (
-    create_time_info (bar_start - 100, 0, 256), output_left, output_right);
+    create_time_info (bar_start - 100, 0, 256), kRolling, output_left,
+    output_right);
 
   // From the bar boundary on, the output is clip B from its first sample
   for (const auto i : std::views::iota (100uz, output_left.size ()))
@@ -1537,7 +1631,7 @@ TEST_F (ClipPlaybackDataProviderTest, StateManagementAcrossBuffers)
   auto output_buffer1 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 128);
 
-  provider_->process_midi_events (time_info1, output_buffer1);
+  provider_->process_midi_events (time_info1, kRolling, output_buffer1);
 
   // Should have the first note but not the second
   auto pitch_60_events1 = find_event_timestamps (output_buffer1, 60);
@@ -1549,7 +1643,7 @@ TEST_F (ClipPlaybackDataProviderTest, StateManagementAcrossBuffers)
   auto output_buffer2 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (128, 0, 2048);
 
-  provider_->process_midi_events (time_info2, output_buffer2);
+  provider_->process_midi_events (time_info2, kRolling, output_buffer2);
 
   // Should have the second note
   auto pitch_62_events2 = find_event_timestamps (output_buffer2, 62);
@@ -1571,7 +1665,7 @@ TEST_F (ClipPlaybackDataProviderTest, BasicFunctionality)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_EQ (output_buffer.size (), 0);
 
   // Test that generate_midi_events can be called without crashing
@@ -1580,7 +1674,7 @@ TEST_F (ClipPlaybackDataProviderTest, BasicFunctionality)
     *clip, structure::tracks::ClipQuantizeOption::Immediate);
 
   // Process again to ensure no crash
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_GT (output_buffer.size (), 0);
 }
 
@@ -1605,7 +1699,7 @@ TEST_F (ClipPlaybackDataProviderTest, GenerateEventsWithMutedNote)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have no events since the only note is muted
   EXPECT_EQ (output_buffer.size (), 0);
@@ -1634,7 +1728,7 @@ TEST_F (ClipPlaybackDataProviderTest, LoopingEdgeCases)
         create_time_info (i * 256, 0, 256);
 
       output_buffer.clear ();
-      provider_->process_midi_events (time_info, output_buffer);
+      provider_->process_midi_events (time_info, kRolling, output_buffer);
       auto events = find_event_timestamps (output_buffer, 60);
       loop_events.push_back (events);
     }
@@ -1677,7 +1771,7 @@ TEST_F (ClipPlaybackDataProviderTest, EventsOnBufferBoundaries)
   auto output_buffer1 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 128);
 
-  provider_->process_midi_events (time_info1, output_buffer1);
+  provider_->process_midi_events (time_info1, kRolling, output_buffer1);
 
   // Should have no events in the first buffer since the note is at the boundary
   auto pitch_60_events1 = find_event_timestamps (output_buffer1, 60);
@@ -1687,7 +1781,7 @@ TEST_F (ClipPlaybackDataProviderTest, EventsOnBufferBoundaries)
   auto output_buffer2 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (128, 0, 128);
 
-  provider_->process_midi_events (time_info2, output_buffer2);
+  provider_->process_midi_events (time_info2, kRolling, output_buffer2);
 
   // Should have the event in the second buffer at position 0
   auto pitch_60_events2 = find_event_timestamps (output_buffer2, 60);
@@ -1715,7 +1809,7 @@ TEST_F (ClipPlaybackDataProviderTest, BackwardPlayheadMovement)
   auto output_buffer1 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info1, output_buffer1);
+  provider_->process_midi_events (time_info1, kRolling, output_buffer1);
 
   // Should have the first note
   auto pitch_60_events1 = find_event_timestamps (output_buffer1, 60);
@@ -1725,7 +1819,7 @@ TEST_F (ClipPlaybackDataProviderTest, BackwardPlayheadMovement)
   auto output_buffer2 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (256, 0, 256);
 
-  provider_->process_midi_events (time_info2, output_buffer2);
+  provider_->process_midi_events (time_info2, kRolling, output_buffer2);
 
   // Should NOT have the second note yet because it's at position 1150
   // and this buffer only covers positions 256-511
@@ -1737,7 +1831,7 @@ TEST_F (ClipPlaybackDataProviderTest, BackwardPlayheadMovement)
   auto output_buffer3 = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info3 = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info3, output_buffer3);
+  provider_->process_midi_events (time_info3, kRolling, output_buffer3);
 
   // Should have the first note again since we looped back
   auto pitch_60_events3 = find_event_timestamps (output_buffer3, 60);
@@ -1768,7 +1862,7 @@ TEST_F (ClipPlaybackDataProviderTest, BackwardPlayheadMovementWithLoop)
       auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
       dsp::graph::ProcessBlockInfo time_info =
         create_time_info (i * 256, 0, 256);
-      provider_->process_midi_events (time_info, output_buffer);
+      provider_->process_midi_events (time_info, kRolling, output_buffer);
 
       // Should have events in each buffer
       auto events = find_event_timestamps (output_buffer, 60);
@@ -1779,7 +1873,7 @@ TEST_F (ClipPlaybackDataProviderTest, BackwardPlayheadMovementWithLoop)
   auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
 
   // Should have events even after the backward jump
   auto events = find_event_timestamps (output_buffer, 60);
@@ -1801,7 +1895,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioInitialState)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Output should be all zeros
   for (size_t i = 0; i < output_left.size (); ++i)
@@ -1825,7 +1920,8 @@ TEST_F (ClipPlaybackDataProviderTest, GenerateAudioEventsWithAudioClip)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have some audio output (not all zeros)
   bool has_audio = false;
@@ -1856,7 +1952,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioClearEvents)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   bool has_audio_before = false;
   for (size_t i = 0; i < output_left.size (); ++i)
@@ -1878,7 +1975,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioClearEvents)
   // Test processing audio again - should have no audio
   std::ranges::fill (output_left, 0.0f);
   std::ranges::fill (output_right, 0.0f);
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   for (size_t i = 0; i < output_left.size (); ++i)
     {
@@ -1913,7 +2011,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioQuantizeOptions)
       std::vector<float>           output_right (256, 0.0f);
       dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-      provider_->process_audio_events (time_info, output_left, output_right);
+      provider_->process_audio_events (
+        time_info, kRolling, output_left, output_right);
 
       // Should have audio for immediate quantization
       if (quantize_option == structure::tracks::ClipQuantizeOption::Immediate)
@@ -1951,7 +2050,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioPreciseLoopingBehavior)
 
   // Process first buffer
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 1024);
-  provider_->process_audio_events (time_info1, output_left, output_right);
+  provider_->process_audio_events (
+    time_info1, kRolling, output_left, output_right);
   loop_audio_left.push_back (output_left);
   loop_audio_right.push_back (output_right);
 
@@ -1959,7 +2059,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioPreciseLoopingBehavior)
   output_left.assign (256, 0.0f);
   output_right.assign (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (1024, 0, 2048);
-  provider_->process_audio_events (time_info2, output_left, output_right);
+  provider_->process_audio_events (
+    time_info2, kRolling, output_left, output_right);
   loop_audio_left.push_back (output_left);
   loop_audio_right.push_back (output_right);
 
@@ -1967,7 +2068,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioPreciseLoopingBehavior)
   output_left.assign (256, 0.0f);
   output_right.assign (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info3 = create_time_info (3072, 0, 2048);
-  provider_->process_audio_events (time_info3, output_left, output_right);
+  provider_->process_audio_events (
+    time_info3, kRolling, output_left, output_right);
   loop_audio_left.push_back (output_left);
   loop_audio_right.push_back (output_right);
 
@@ -2001,7 +2103,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioPreciseEventTiming)
   std::vector<float>           output_right (4096, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 4096);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have audio output
   bool has_audio = false;
@@ -2044,7 +2147,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBarBoundaryQuantization)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (64, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have no audio initially because we're waiting for the next bar
   for (size_t i = 0; i < output_left.size (); ++i)
@@ -2061,7 +2165,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBarBoundaryQuantization)
 
   std::ranges::fill (output_left, 0.0f);
   std::ranges::fill (output_right, 0.0f);
-  provider_->process_audio_events (bar_time_info, output_left, output_right);
+  provider_->process_audio_events (
+    bar_time_info, kRolling, output_left, output_right);
 
   // Should now have audio because we're at the next bar
   bool has_audio = false;
@@ -2093,7 +2198,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBeatBoundaryQuantization)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (64, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have no audio initially because we're waiting for the next beat
   for (size_t i = 0; i < output_left.size (); ++i)
@@ -2110,7 +2216,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBeatBoundaryQuantization)
 
   std::ranges::fill (output_left, 0.0f);
   std::ranges::fill (output_right, 0.0f);
-  provider_->process_audio_events (beat_time_info, output_left, output_right);
+  provider_->process_audio_events (
+    beat_time_info, kRolling, output_left, output_right);
 
   // Should now have audio because we're at the next beat
   bool has_audio = false;
@@ -2151,7 +2258,8 @@ TEST_P (
   std::vector<float>           output_right (buffer_size, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, buffer_size);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have audio regardless of buffer size
   bool has_audio = false;
@@ -2188,7 +2296,8 @@ TEST_F (ClipPlaybackDataProviderTest, ProcessAudioEventsWithOffset)
   dsp::graph::ProcessBlockInfo time_info =
     create_time_info (10000, 100, 256 - 100);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have audio since we're using immediate quantization
   bool has_audio = false;
@@ -2240,7 +2349,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioStateManagementAcrossBuffers)
   std::vector<float>           output_right1 (128, 0.0f);
   dsp::graph::ProcessBlockInfo time_info1 = create_time_info (0, 0, 128);
 
-  provider_->process_audio_events (time_info1, output_left1, output_right1);
+  provider_->process_audio_events (
+    time_info1, kRolling, output_left1, output_right1);
 
   // Should have audio in the first buffer
   bool has_audio1 = false;
@@ -2261,7 +2371,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioStateManagementAcrossBuffers)
   std::vector<float>           output_right2 (2048, 0.0f);
   dsp::graph::ProcessBlockInfo time_info2 = create_time_info (128, 0, 2048);
 
-  provider_->process_audio_events (time_info2, output_left2, output_right2);
+  provider_->process_audio_events (
+    time_info2, kRolling, output_left2, output_right2);
 
   // Should have audio in the second buffer due to looping
   bool has_audio2 = false;
@@ -2288,7 +2399,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBasicFunctionality)
   std::vector<float>           output_right (256, 0.0f);
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should be all zeros initially
   for (size_t i = 0; i < output_left.size (); ++i)
@@ -2303,7 +2415,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioBasicFunctionality)
     *clip, structure::tracks::ClipQuantizeOption::Immediate);
 
   // Process again to ensure no crash
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should now have audio
   bool has_audio = false;
@@ -2335,7 +2448,7 @@ TEST_F (ClipPlaybackDataProviderTest, MidiAllNotesOffWhenClipStops)
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
   // First, process events to establish playing state
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_GT (output_buffer.size (), 0);
   EXPECT_TRUE (provider_->playing ());
 
@@ -2347,7 +2460,7 @@ TEST_F (ClipPlaybackDataProviderTest, MidiAllNotesOffWhenClipStops)
     structure::tracks::ClipQuantizeOption::Immediate);
 
   // Process events again - should send all-notes-off due to transition
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_FALSE (provider_->playing ());
 
   // Should have exactly 16 events: all-notes-off on each channel
@@ -2366,7 +2479,7 @@ TEST_F (ClipPlaybackDataProviderTest, MidiAllNotesOffWhenClipStops)
 
   // Process events a third time - should have no events (transition already
   // handled)
-  provider_->process_midi_events (time_info, output_buffer);
+  provider_->process_midi_events (time_info, kRolling, output_buffer);
   EXPECT_EQ (output_buffer.size (), 0);
 }
 
@@ -2384,7 +2497,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioDoesNotGetStuckAfterClear)
   dsp::graph::ProcessBlockInfo time_info = create_time_info (0, 0, 256);
 
   // First, process audio to establish playing state
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
 
   // Should have some audio output
   bool has_audio_before = false;
@@ -2411,7 +2525,8 @@ TEST_F (ClipPlaybackDataProviderTest, AudioDoesNotGetStuckAfterClear)
 
   // Process audio again - should have no new audio (provider doesn't clear
   // buffers)
-  provider_->process_audio_events (time_info, output_left, output_right);
+  provider_->process_audio_events (
+    time_info, kRolling, output_left, output_right);
   EXPECT_FALSE (provider_->playing ());
 
   // Buffers should remain unchanged (provider adds to existing content)

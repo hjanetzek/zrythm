@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "dsp/transport.h"
 #include "structure/arrangement/arranger_object_all.h"
 #include "structure/scenes/clip_slot.h"
 #include "structure/scenes/scene.h"
@@ -36,6 +37,12 @@ public:
   // ========================================================================
   // Clip Operations
   // ========================================================================
+
+  /**
+   * @brief Transport started when a clip or scene is launched while it is
+   * not rolling (optional); clips play only while it rolls.
+   */
+  void set_transport (dsp::Transport * transport) { transport_ = transport; }
 
   /**
    * @brief Launch a clip with quantization.
@@ -330,6 +337,8 @@ private:
    * change.
    */
   utils::QObjectUniquePtr<QTimer> playback_state_monitor_;
+
+  QPointer<dsp::Transport> transport_;
 };
 
 }

@@ -137,16 +137,27 @@ public:
     return pending_slot (slot_state_.load ()) != kNoSlot;
   }
 
-  // TrackEventProvider interface
+  /**
+   * @brief Renders the MIDI events of the playing clip for one block.
+   *
+   * Clips play only while the transport is rolling: when it stops, held
+   * notes are released and nothing is rendered until it rolls again, then
+   * playback continues at the transport position. Queued clips and stops
+   * wait while the transport is not rolling.
+   */
   void process_midi_events (
     const dsp::graph::ProcessBlockInfo &time_nfo,
+    dsp::ITransport::PlayState          transport_state,
     dsp::MidiEventBuffer &output_buffer) noexcept [[clang::nonblocking]];
 
   /**
-   * @brief Process audio events for clip launcher playback.
+   * @brief Renders the audio of the playing clip for one block.
+   *
+   * @see process_midi_events()
    */
   void process_audio_events (
     const dsp::graph::ProcessBlockInfo &time_nfo,
+    dsp::ITransport::PlayState          transport_state,
     std::span<float>                    left_buffer,
     std::span<float> right_buffer) noexcept [[clang::nonblocking]];
 
@@ -236,6 +247,7 @@ private:
   template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
   void process_block (
     const dsp::graph::ProcessBlockInfo &time_nfo,
+    dsp::ITransport::PlayState          transport_state,
     RenderSegmentFunc                   render_segment,
     EndFunc on_playback_end) noexcept [[clang::nonblocking]];
 
@@ -336,6 +348,12 @@ private:
    * thread only).
    */
   bool resync_position_{};
+
+  /**
+   * @brief Whether the previous block rendered while the transport was
+   * rolling (audio thread only).
+   */
+  bool was_rolling_{};
 
   /**
    * @brief Position within the played contents, from 0 to 1 (see

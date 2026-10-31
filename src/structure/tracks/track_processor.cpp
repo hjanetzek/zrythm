@@ -673,7 +673,7 @@ TrackProcessor::fill_midi_events (
     ENUM_BITSET_TEST (active_providers, ActiveMidiEventProviders::ClipLauncher))
     {
       impl_->clip_playback_data_provider_->process_midi_events (
-        time_nfo, midi_events);
+        time_nfo, transport.get_play_state (), midi_events);
     }
   if (ENUM_BITSET_TEST (active_providers, ActiveMidiEventProviders::Custom))
     {
@@ -704,7 +704,8 @@ TrackProcessor::fill_audio_events (
   if (ENUM_BITSET_TEST (active_providers, ActiveAudioProviders::ClipLauncher))
     {
       impl_->clip_playback_data_provider_->process_audio_events (
-        time_nfo, stereo_ports.first, stereo_ports.second);
+        time_nfo, transport.get_play_state (), stereo_ports.first,
+        stereo_ports.second);
     }
 
   // TODO: remove this and implement other audio providers (Recording, Custom)

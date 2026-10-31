@@ -20,6 +20,9 @@
 namespace zrythm::structure::scenes
 {
 
+// Clip playback in these tests runs with a rolling transport
+constexpr auto kRolling = dsp::ITransport::PlayState::Rolling;
+
 class ClipPlaybackServiceTest : public ::testing::Test
 {
 protected:
@@ -119,7 +122,7 @@ protected:
           .process_midi_events (
             dsp::graph::ProcessBlockInfo::from_position_and_nframes (
               units::samples (position), units::samples (nframes)),
-            midi_events);
+            kRolling, midi_events);
       }
   }
 

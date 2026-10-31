@@ -421,9 +421,21 @@ template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
 void
 ClipPlaybackDataProvider::process_block (
   const dsp::graph::ProcessBlockInfo &time_nfo,
+  dsp::ITransport::PlayState          transport_state,
   RenderSegmentFunc                   render_segment,
   EndFunc                             on_playback_end) noexcept
 {
+  // Clips play only while the transport rolls; held notes are released
+  // when it stops
+  const bool rolling = transport_state == dsp::ITransport::PlayState::Rolling;
+  const bool was_rolling = std::exchange (was_rolling_, rolling);
+  if (!rolling)
+    {
+      if (was_rolling && playing_.load ())
+        on_playback_end (time_nfo.buffer_offset_);
+      return;
+    }
+
   const auto state = slot_state_.load (std::memory_order_acquire);
   const auto pending = pending_slot (state);
 
@@ -611,10 +623,11 @@ ClipPlaybackDataProvider::render_midi_segment (
 void
 ClipPlaybackDataProvider::process_midi_events (
   const dsp::graph::ProcessBlockInfo &time_nfo,
+  dsp::ITransport::PlayState          transport_state,
   dsp::MidiEventBuffer               &output_buffer) noexcept
 {
   process_block<MidiContent> (
-    time_nfo,
+    time_nfo, transport_state,
     [&] (
       const MidiContent &content, const PlaybackCache &,
       units::sample_t block_offset, units::sample_t length) {
@@ -635,6 +648,7 @@ ClipPlaybackDataProvider::process_midi_events (
 void
 ClipPlaybackDataProvider::process_audio_events (
   const dsp::graph::ProcessBlockInfo &time_nfo,
+  dsp::ITransport::PlayState          transport_state,
   std::span<float>                    left_buffer,
   std::span<float>                    right_buffer) noexcept
 {
@@ -689,7 +703,7 @@ ClipPlaybackDataProvider::process_audio_events (
     };
 
   process_block<AudioContent> (
-    time_nfo,
+    time_nfo, transport_state,
     [&] (
       const AudioContent &audio_buffer, const PlaybackCache &cache,
       units::sample_t block_offset, units::sample_t length) {
