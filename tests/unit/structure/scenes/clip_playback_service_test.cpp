@@ -663,6 +663,102 @@ TEST_F (ClipPlaybackServiceTest, SetAllTracksToTimelineMode)
   EXPECT_TRUE (playback_service_->getPlayingClips ().isEmpty ());
 }
 
+TEST_F (ClipPlaybackServiceTest, RemovingSceneStopsItsPlayingClips)
+{
+  auto * scene = create_scene_with_clips ();
+  playback_service_->launchScene (
+    scene, structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  for (const auto &track_ref : track_collection_->tracks ())
+    {
+      ASSERT_TRUE (wait_for_state (
+        scene->clipSlots ()->clipSlotForTrack (track_ref.get ()),
+        ClipSlot::ClipState::Playing));
+    }
+
+  // Destroying the scene destroys its clip slots
+  scenes_.clear ();
+
+  EXPECT_TRUE (playback_service_->getPlayingClips ().isEmpty ());
+  process_block (256);
+  for (const auto &track_ref : track_collection_->tracks ())
+    {
+      EXPECT_FALSE (
+        track_ref.get ()
+          ->get_track_processor ()
+          ->clip_playback_data_provider ()
+          .playing ());
+    }
+
+  // Stopping afterwards finds nothing to stop
+  QSignalSpy stoppedSpy (
+    playback_service_.get (), &ClipPlaybackService::clipStopped);
+  playback_service_->stopAllClips (
+    structure::tracks::ClipQuantizeOption::Immediate);
+  EXPECT_EQ (stoppedSpy.count (), 0);
+}
+
+TEST_F (ClipPlaybackServiceTest, DestroyingQueuedClipSlotCancelsLaunch)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  clipSlot.reset ();
+
+  const auto &provider =
+    track->get_track_processor ()->clip_playback_data_provider ();
+  EXPECT_FALSE (provider.launch_pending ());
+  EXPECT_TRUE (playback_service_->getPlayingClips ().isEmpty ());
+  process_block (bar_start_samples (2) - 100);
+  EXPECT_FALSE (provider.playing ());
+}
+
+TEST_F (ClipPlaybackServiceTest, DestroyingPlayingClipSlotKeepsQueuedClip)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   slot_a = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_b = utils::make_qobject_unique<ClipSlot> (*registry_);
+  slot_a->setClip (create_midi_clip ());
+  slot_b->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot_a.get (), ClipSlot::ClipState::Playing));
+  playback_service_->launchClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+
+  slot_a.reset ();
+
+  // B still takes over at the bar
+  process_block (bar_start_samples (2) - 100);
+  EXPECT_TRUE (wait_for_state (slot_b.get (), ClipSlot::ClipState::Playing));
+  EXPECT_EQ (
+    playback_service_->getPlayingClips (), QList<ClipSlot *>{ slot_b.get () });
+}
+
+TEST_F (ClipPlaybackServiceTest, RemovingTrackForgetsItsClips)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
+
+  track_collection_->remove_track (track->get_uuid ());
+
+  EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::Stopped);
+  EXPECT_TRUE (playback_service_->getPlayingClips ().isEmpty ());
+  playback_service_->stopAllClips (
+    structure::tracks::ClipQuantizeOption::Immediate);
+}
+
 TEST_F (ClipPlaybackServiceTest, CancelPendingClipOperations)
 {
   // Get a track and create a clip slot with a clip

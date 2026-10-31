@@ -22,6 +22,63 @@ ClipPlaybackService::ClipPlaybackService (
   QObject::connect (
     playback_state_monitor_.get (), &QTimer::timeout, this,
     &ClipPlaybackService::checkPlaybackState);
+
+  // Forget clips of removed tracks
+  QObject::connect (
+    &track_collection_, &tracks::TrackCollection::rowsRemoved, this,
+    &ClipPlaybackService::checkPlaybackState);
+}
+
+tracks::Track *
+ClipPlaybackService::trackIfPresent (const tracks::Track::Uuid &track_id) const
+{
+  if (!track_collection_.contains (track_id))
+    return nullptr;
+  return track_collection_.track_ref_at_id (track_id).get ();
+}
+
+void
+ClipPlaybackService::watchClipSlot (ClipSlot * clip_slot)
+{
+  QObject::connect (
+    clip_slot, &QObject::destroyed, this,
+    &ClipPlaybackService::onClipSlotDestroyed, Qt::UniqueConnection);
+}
+
+void
+ClipPlaybackService::onClipSlotDestroyed (QObject * object)
+{
+  const auto is_destroyed_slot = [object] (const ClipSlot * clip_slot) {
+    return clip_slot != nullptr
+           && static_cast<const QObject *> (clip_slot) == object;
+  };
+
+  std::erase_if (track_states_, [&] (auto &entry) {
+    auto &[track_uuid, track_state] = entry;
+    auto * track = trackIfPresent (track_uuid);
+    auto * processor =
+      track != nullptr ? track->get_track_processor () : nullptr;
+
+    if (is_destroyed_slot (track_state.queued_slot))
+      {
+        if (processor != nullptr)
+          processor->clip_playback_data_provider ().cancel_pending_launch ();
+        track_state.queued_slot = nullptr;
+      }
+    if (is_destroyed_slot (track_state.playing_slot))
+      {
+        // A queued clip still takes over at its quantization point;
+        // otherwise playback stops right away
+        if (processor != nullptr && track_state.queued_slot == nullptr)
+          processor->clip_playback_data_provider ().queue_stop_playback (
+            structure::tracks::ClipQuantizeOption::Immediate);
+        track_state.playing_slot = nullptr;
+        track_state.stop_requested = false;
+        track_state.stop_quantized = false;
+      }
+    return track_state.playing_slot == nullptr
+           && track_state.queued_slot == nullptr;
+  });
 }
 
 void
@@ -136,7 +193,7 @@ ClipPlaybackService::stopAllClips (
     track_states_ | std::views::keys | std::ranges::to<std::vector> ();
   for (const auto &track_uuid : track_uuids)
     {
-      auto * track = track_collection_.track_ref_at_id (track_uuid).get ();
+      auto * track = trackIfPresent (track_uuid);
       if (track != nullptr)
         {
           stopTrackClips (track, quantize);
@@ -190,7 +247,7 @@ ClipPlaybackService::getClipPlaybackPosition (ClipSlot * clipSlot) const
       if (track_state.playing_slot == clipSlot)
         {
           // Get the track
-          auto * track = track_collection_.track_ref_at_id (trackUuid).get ();
+          auto * track = trackIfPresent (trackUuid);
           if (track == nullptr)
             return -1.0;
 
@@ -337,6 +394,7 @@ ClipPlaybackService::scheduleClipLaunch (
   track_state.queued_slot = clipSlot;
   track_state.stop_requested = false;
   track_state.stop_quantized = false;
+  watchClipSlot (clipSlot);
 
   // Update clip slot state to queued
   updateClipSlotState (clipSlot, ClipSlot::ClipState::PlayQueued);
@@ -400,7 +458,10 @@ ClipPlaybackService::scheduleClipStop (
     }
   track_state.queued_slot = nullptr;
   if (track_state.playing_slot == nullptr)
-    track_state.playing_slot = clipSlot;
+    {
+      track_state.playing_slot = clipSlot;
+      watchClipSlot (clipSlot);
+    }
   track_state.stop_requested = true;
   track_state.stop_quantized =
     quantize != structure::tracks::ClipQuantizeOption::Immediate;
@@ -451,12 +512,21 @@ ClipPlaybackService::checkPlaybackState ()
 
   std::erase_if (track_states_, [&] (auto &entry) {
     auto &[track_uuid, track_state] = entry;
-    const auto track_ref = track_collection_.track_ref_at_id (track_uuid);
-    auto *     track = track_ref.get ();
-    auto *     processor =
+    auto * track = trackIfPresent (track_uuid);
+    auto * processor =
       track != nullptr ? track->get_track_processor () : nullptr;
     if (processor == nullptr)
-      return true;
+      {
+        // The track was removed: its clips no longer play
+        for (
+          auto * clip_slot :
+          { track_state.playing_slot, track_state.queued_slot })
+          {
+            if (clip_slot != nullptr)
+              record_state_change (clip_slot, ClipSlot::ClipState::Stopped);
+          }
+        return true;
+      }
 
     const auto &provider = processor->clip_playback_data_provider ();
     const bool  playing = provider.playing ();

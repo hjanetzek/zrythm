@@ -255,6 +255,26 @@ private:
   void startPlaybackStateMonitor ();
 
   /**
+   * @brief Returns the track with @p track_id, or nullptr if it is no longer
+   * in the track collection.
+   */
+  tracks::Track * trackIfPresent (const tracks::Track::Uuid &track_id) const;
+
+  /**
+   * @brief Starts tracking @p clip_slot so that it is forgotten when
+   * destroyed.
+   */
+  void watchClipSlot (ClipSlot * clip_slot);
+
+  /**
+   * @brief Stops or cancels playback of a destroyed clip slot and forgets
+   * it.
+   *
+   * @p object is only compared against tracked slots, never accessed.
+   */
+  void onClipSlotDestroyed (QObject * object);
+
+  /**
    * @brief Updates clip slot states from the playback state of each track's
    * processor.
    */
