@@ -12,6 +12,84 @@ Build: Debug via Conan `gcc_debug` profile → `conanbuild/Debug`
 
 ---
 
+## Recording into Clip Launcher Slots: What's Missing (2026-10-31)
+
+Recording into slots is not implemented at all. The recording pipeline
+itself is solid and already handles **both audio and MIDI**, so most of
+the work is giving it a second destination (a clip slot) besides
+timeline lanes.
+
+`doc/dev/recording_architecture.md` is out of date: it describes only
+audio and lists MIDI as an extension, but the code has
+`RecordingMidiPacket` and `RecordingMaterializer::on_midi_data_ready`
+(notes, control events, chord clips).
+
+### How recording works today
+
+```mermaid
+graph LR
+    TP["TrackProcessor<br/>(armed + transport rolling)"] -->|"RecordingCallbackRT"| SES["RecordingSession<br/>(SPSC per track)"]
+    SES -->|"100 ms drain"| RC["RecordingCoordinator"]
+    RC -->|"audio/midiDataReady"| RM["RecordingMaterializer"]
+    RM -->|"creators (lane index, timeline pos)"| LANE["Clip on a timeline lane"]
+```
+
+- Capture happens in `TrackProcessor::custom_process_block` when the
+  transport is rolling, preroll is done, and the track is armed
+  (`track_processor.cpp:872`). The clip launcher mode is not checked.
+- Packets carry the timeline position and a `transport_recording` flag.
+  The materializer **drops packets unless `transport_recording` is set**
+  (`recording_materializer.cpp:62`, `:306`), i.e. unless the global
+  record button is on.
+- The materializer creates clips only on lanes, at timeline positions,
+  through the creator callbacks wired in `project_session.cpp:347`. It
+  opens a new take on any discontinuity, such as a transport loop.
+- One undo macro covers each take; it closes on
+  `RecordingCoordinator::recordingSessionEnded`, i.e. when the transport
+  stops.
+
+### Gaps for slot recording
+
+1. **No way to start it.** `ClipSlot::ClipState` has no recording states
+   (`RecordQueued`/`Recording`), the service has no `recordIntoSlot`, and
+   `ClipLaunchButton` offers only play and stop. A record button on
+   empty slots of armed tracks is the usual UI.
+2. **No destination selection.** The materializer needs a per-track
+   target: "slot X, window [start, end)". Clip-relative positions would
+   start at the quantized start sample, and the clip would be attached
+   with `AddClipToClipSlotCommand` instead of a lane add. Today the
+   creator callbacks are lane-only.
+3. **Gating on the global record button.** Slot recording must keep
+   packets inside its window even when `transport_recording` is false,
+   and timeline recording must not also record them.
+4. **Quantized start and stop.** The start and end samples need to be
+   computed from the launch quantization (next bar/beat, from the
+   `TempoMap`), with optional fixed lengths (1, 2, 4 bars …). Trimming
+   to the window is exact because packets carry timeline positions.
+5. **Transport loop and seeks.** A jump backwards currently starts a new
+   take. Slot recording should end, or ignore the packets, rather than
+   create a second clip.
+6. **Finishing.** Set the clip length and loop points to the recorded
+   (quantized) length, close the undo macro per slot recording rather
+   than on transport stop, and optionally hand over to playback at the
+   end boundary. The queued-launch mechanism added for clip switching can
+   start the new clip on exactly that sample.
+7. **Monitoring and the playing clip.** Input monitoring already works
+   (`MonitorMode::Auto` while armed), but a clip playing on the same
+   track would sound together with the input. It should stop, or be
+   replaced, when recording starts.
+8. **MIDI specifics.** Notes held at the end of the window need note-offs
+   at the clip end (`force_complete_pending_notes` exists). Overdubbing
+   into an existing MIDI clip is a separate, later feature.
+9. **Tests.** `tests/integration/audio_recording_pipeline_test.cpp` is
+   the model for an end-to-end slot recording test.
+
+Rough order: 3 + 2 in the materializer (a destination abstraction), then
+4 and 6 in the service with the new slot states, then UI (1), then 5, 7
+and 8.
+
+---
+
 ## Clip Launcher: State of the Implementation (2026-10-31)
 
 Snapshot at `1d50dc9d4` (v2.0.0-alpha.7). Based on reading the code and
