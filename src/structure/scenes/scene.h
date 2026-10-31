@@ -77,6 +77,18 @@ public:
 
   // Scene management
   void insert_scene (utils::QObjectUniquePtr<Scene> scene, int index);
+
+  /**
+   * @brief Removes the scene at @p index and hands it to the caller.
+   *
+   * @pre @p index is a valid row.
+   */
+  utils::QObjectUniquePtr<Scene> take_scene (int index);
+
+  /**
+   * @brief Row of @p scene, or -1 if it is not in this list.
+   */
+  Q_INVOKABLE int  indexOfScene (const Scene * scene) const;
   Q_INVOKABLE void removeScene (int index);
   Q_INVOKABLE void moveScene (int fromIndex, int toIndex);
 

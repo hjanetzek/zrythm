@@ -57,6 +57,29 @@ SceneList::insert_scene (utils::QObjectUniquePtr<Scene> scene, int index)
   endInsertRows ();
 }
 
+utils::QObjectUniquePtr<Scene>
+SceneList::take_scene (int index)
+{
+  assert (index >= 0 && index < static_cast<int> (scenes_.size ()));
+
+  beginRemoveRows ({}, index, index);
+  auto scene = std::move (scenes_.at (static_cast<size_t> (index)));
+  scenes_.erase (scenes_.begin () + index);
+  endRemoveRows ();
+  return scene;
+}
+
+int
+SceneList::indexOfScene (const Scene * scene) const
+{
+  const auto it = std::ranges::find_if (scenes_, [scene] (const auto &s) {
+    return s.get () == scene;
+  });
+  return it == scenes_.end ()
+           ? -1
+           : static_cast<int> (std::ranges::distance (scenes_.begin (), it));
+}
+
 void
 SceneList::removeScene (int index)
 {
@@ -77,21 +100,13 @@ SceneList::moveScene (int fromIndex, int toIndex)
     || fromIndex == toIndex)
     return;
 
-  beginMoveRows ({}, fromIndex, fromIndex, {}, toIndex);
-  if (fromIndex < toIndex)
-    {
-      // Moving down
-      auto scene = std::move (scenes_[fromIndex]);
-      scenes_.erase (scenes_.begin () + fromIndex);
-      scenes_.insert (scenes_.begin () + toIndex, std::move (scene));
-    }
-  else
-    {
-      // Moving up
-      auto scene = std::move (scenes_[fromIndex]);
-      scenes_.erase (scenes_.begin () + fromIndex);
-      scenes_.insert (scenes_.begin () + toIndex, std::move (scene));
-    }
+  // Qt's destination is the row before which the scene goes, counted before
+  // the move
+  const int destination_row = fromIndex < toIndex ? toIndex + 1 : toIndex;
+  beginMoveRows ({}, fromIndex, fromIndex, {}, destination_row);
+  auto scene = std::move (scenes_[fromIndex]);
+  scenes_.erase (scenes_.begin () + fromIndex);
+  scenes_.insert (scenes_.begin () + toIndex, std::move (scene));
   endMoveRows ();
 }
 

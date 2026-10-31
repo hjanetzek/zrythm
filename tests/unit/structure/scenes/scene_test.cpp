@@ -238,6 +238,31 @@ TEST_F (SceneListTest, MoveScene)
   EXPECT_EQ (scenePtr2->name (), "Scene 2");
 }
 
+TEST_F (SceneListTest, MoveSceneReportsQtMoveDestination)
+{
+  for (const auto _ : std::views::iota (0, 3))
+    {
+      scene_list_->insert_scene (
+        utils::make_qobject_unique<Scene> (*registry_, *track_collection_),
+        scene_list_->rowCount ());
+    }
+  auto * first = scene_list_->scenes ().front ().get ();
+
+  // Qt reports the destination as the row before which the moved row goes,
+  // counted before the move
+  QSignalSpy moved_spy (scene_list_.get (), &QAbstractItemModel::rowsMoved);
+  scene_list_->moveScene (0, 2);
+  ASSERT_EQ (moved_spy.count (), 1);
+  EXPECT_EQ (moved_spy.at (0).at (1).toInt (), 0);
+  EXPECT_EQ (moved_spy.at (0).at (4).toInt (), 3);
+  EXPECT_EQ (scene_list_->scenes ().at (2).get (), first);
+
+  scene_list_->moveScene (2, 0);
+  ASSERT_EQ (moved_spy.count (), 2);
+  EXPECT_EQ (moved_spy.at (1).at (4).toInt (), 0);
+  EXPECT_EQ (scene_list_->scenes ().front ().get (), first);
+}
+
 TEST_F (SceneListTest, RoleNames)
 {
   auto roles = scene_list_->roleNames ();
