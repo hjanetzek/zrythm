@@ -269,6 +269,22 @@ graph TB
     end
 ```
 
+### Looping and Tempo for MIDI Clips
+
+A launched MIDI clip plays from its clip start marker to its loop end once (the intro), then repeats from its loop start to its loop end indefinitely; the clip's length is not used. The cache holds the intro followed by one full loop, with event times in ticks from the clip start.
+
+```mermaid
+graph LR
+    ClipStart[Clip start] -->|intro| LoopEnd1[Loop end]
+    LoopEnd1 -->|wrap| LoopStart[Loop start]
+    LoopStart -->|loop| LoopEnd2[Loop end]
+    LoopEnd2 -->|wrap| LoopStart
+```
+
+Playback advances in ticks: each block moves the clip's playback position by the block's length in ticks at the current tempo, and follows the transport position when it changes. Event sample offsets are derived from the tempo map, so tempo changes after the launch shift the events accordingly. Note-offs that fall on the loop end play before the wrap.
+
+Audio clips loop their rendered timeline playback (clip length) and follow tempo only through warping.
+
 ### Cache Generation Flow
 
 ```mermaid

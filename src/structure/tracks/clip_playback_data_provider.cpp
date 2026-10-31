@@ -4,6 +4,7 @@
 #include "structure/arrangement/clip_renderer.h"
 #include "structure/tracks/clip_playback_data_provider.h"
 #include "utils/float_ranges.h"
+#include "utils/midi.h"
 
 namespace zrythm::structure::tracks
 {
@@ -37,7 +38,9 @@ note_grid_ticks (structure::tracks::ClipQuantizeOption quantize_opt)
 ClipPlaybackDataProvider::ClipPlaybackDataProvider (
   const dsp::TempoMap &tempo_map)
     : tempo_map_ (tempo_map), last_seen_timeline_position_ (units::samples (0)),
-      clip_launch_timeline_position_ (units::samples (0))
+      clip_launch_timeline_position_ (units::samples (0)),
+      clip_launch_timeline_tick_ (units::ticks (0.0)),
+      midi_playback_tick_ (units::ticks (0.0))
 {
   internal_clip_buffer_position_.store (units::samples (0));
 }
@@ -90,29 +93,45 @@ ClipPlaybackDataProvider::generate_midi_events (
   const arrangement::MidiClip          &midi_clip,
   structure::tracks::ClipQuantizeOption quantize_option)
 {
+  // The intro runs from the clip start to the first loop end; one full loop
+  // follows it, also when the clip start lies after the loop start
+  const auto clip_start = midi_clip.clipStartPosition ()->asTick ();
+  const auto loop_start = midi_clip.loopStartPosition ()->asTick ();
+  const auto loop_end = midi_clip.loopEndPosition ()->asTick ();
+  const auto intro_length = (loop_end - clip_start).asQuantity ();
+  const auto loop_length = (loop_end - loop_start).asQuantity ();
+  assert (intro_length > units::ticks (0.0) && loop_length > units::ticks (0.0));
+
+  // Serialize clip (timings in ticks from the clip start)
   juce::MidiMessageSequence clip_seq;
+  arrangement::ClipRenderer::serialize_to_sequence (
+    midi_clip, clip_seq, std::nullopt,
+    dsp::ContentTick{ intro_length + loop_length });
+  clip_seq.sort ();
 
-  // Serialize clip (timings in ticks)
-  arrangement::ClipRenderer::serialize_to_sequence (midi_clip, clip_seq);
-
-  // Convert JUCE sequence to native events with sample timestamps
-  std::vector<dsp::SampleBasedMidiEvent> native_events;
-  native_events.reserve (clip_seq.getNumEvents ());
+  MidiContent content{
+    .events_ = {},
+    .intro_length_ = intro_length,
+    .loop_length_ = loop_length,
+    .clip_start_ = clip_start.asQuantity (),
+    .loop_start_ = loop_start.asQuantity (),
+    .clip_length_ = units::ticks (midi_clip.length ()->ticks ()),
+  };
+  content.events_.reserve (static_cast<size_t> (clip_seq.getNumEvents ()));
   for (const auto &event : clip_seq)
     {
-      const auto sample_time = tempo_map_.tick_to_samples_rounded (
-        dsp::TimelineTick{ units::ticks (event->message.getTimeStamp ()) });
       const auto * raw = event->message.getRawData ();
       const auto   raw_size =
         static_cast<size_t> (event->message.getRawDataSize ());
-      native_events.push_back (
+      content.events_.push_back (
         dsp::midi_event::make_raw (
-          std::span<const midi_byte_t>{ raw, raw_size }, sample_time));
+          std::span<const midi_byte_t>{ raw, raw_size },
+          units::ticks (event->message.getTimeStamp ())));
     }
 
   queue_cache (
     PlaybackCache{
-      .content_ = std::move (native_events),
+      .content_ = std::move (content),
       .quantize_opt_ = quantize_option,
       .end_position_ = units::ticks (midi_clip.length ()->ticks ()) });
 }
@@ -351,14 +370,14 @@ ClipPlaybackDataProvider::quantization_offset_in_block (
   return offset;
 }
 
-template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
 void
 ClipPlaybackDataProvider::render_slot (
   uint32_t                            slot,
   const dsp::graph::ProcessBlockInfo &time_nfo,
   units::sample_t                     block_offset,
   units::sample_t                     length,
-  RenderChunkFunc                    &render_chunk,
+  RenderSegmentFunc                  &render_segment,
   EndFunc                            &on_playback_end) noexcept
 {
   if (length == units::samples (0))
@@ -382,35 +401,14 @@ ClipPlaybackDataProvider::render_slot (
   if (!playing_.load ())
     return;
 
-  const auto clip_loop_end_samples = tempo_map_.tick_to_samples_rounded (
-    dsp::TimelineTick{ (*cache)->end_position_ });
-  if (clip_loop_end_samples <= units::samples (0))
-    return;
-
-  // A clip that was already playing at the block start follows the
-  // transport position
-  if (block_offset == units::samples (0))
-    update_playback_position (time_nfo, clip_loop_end_samples);
-
-  process_chunks_with_looping (
-    internal_clip_buffer_position_.load (), length, clip_loop_end_samples,
-    time_nfo.buffer_offset_ + block_offset,
-    [&] (
-      units::sample_t current_internal_buffer_offset,
-      units::sample_t samples_to_process_in_chunk,
-      units::sample_t total_samples_processed,
-      units::sample_t output_buffer_timestamp_offset) {
-      render_chunk (
-        *content, current_internal_buffer_offset, samples_to_process_in_chunk,
-        total_samples_processed, output_buffer_timestamp_offset);
-    });
+  render_segment (*content, **cache, block_offset, length);
 }
 
-template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
 void
 ClipPlaybackDataProvider::process_block (
   const dsp::graph::ProcessBlockInfo &time_nfo,
-  RenderChunkFunc                     render_chunk,
+  RenderSegmentFunc                   render_segment,
   EndFunc                             on_playback_end) noexcept
 {
   const auto state = slot_state_.load (std::memory_order_acquire);
@@ -440,7 +438,7 @@ ClipPlaybackDataProvider::process_block (
   const auto played_length = switch_offset.value_or (block_length);
   render_slot<ContentT> (
     current_slot (state), time_nfo, units::samples (0), played_length,
-    render_chunk, on_playback_end);
+    render_segment, on_playback_end);
 
   if (switch_offset.has_value ())
     {
@@ -459,11 +457,16 @@ ClipPlaybackDataProvider::process_block (
             {
               clip_launch_timeline_position_ =
                 time_nfo.transport_position_ + *switch_offset;
+              clip_launch_timeline_tick_ =
+                tempo_map_.samples_to_tick (clip_launch_timeline_position_)
+                  .asQuantity ();
               internal_clip_buffer_position_.store (units::samples (0));
+              midi_playback_tick_ = units::ticks (0.0);
+              playback_fraction_.store (0.0);
 
               render_slot<ContentT> (
                 pending, time_nfo, *switch_offset,
-                block_length - *switch_offset, render_chunk, on_playback_end);
+                block_length - *switch_offset, render_segment, on_playback_end);
             }
         }
       else
@@ -472,11 +475,116 @@ ClipPlaybackDataProvider::process_block (
           // played now
           render_slot<ContentT> (
             current_slot (expected_state), time_nfo, *switch_offset,
-            block_length - *switch_offset, render_chunk, on_playback_end);
+            block_length - *switch_offset, render_segment, on_playback_end);
         }
     }
 
   last_seen_timeline_position_ = time_nfo.transport_position_;
+}
+
+void
+ClipPlaybackDataProvider::render_midi_segment (
+  const MidiContent                  &content,
+  const dsp::graph::ProcessBlockInfo &time_nfo,
+  units::sample_t                     block_offset,
+  units::sample_t                     length,
+  dsp::MidiEventBuffer               &output_buffer) noexcept
+{
+  const auto intro = content.intro_length_;
+  const auto loop = content.loop_length_;
+  const auto content_end = intro + loop;
+
+  const auto segment_start = time_nfo.transport_position_ + block_offset;
+  const auto segment_start_tick =
+    tempo_map_.samples_to_tick (segment_start).asQuantity ();
+  const auto segment_ticks =
+    tempo_map_.samples_to_tick (segment_start + length).asQuantity ()
+    - segment_start_tick;
+
+  // A clip that was already playing at the block start follows the
+  // transport position
+  if (
+    block_offset == units::samples (0)
+    && time_nfo.transport_position_ != last_seen_timeline_position_)
+    {
+      midi_playback_tick_ = segment_start_tick - clip_launch_timeline_tick_;
+    }
+
+  // Position in the contents for a playback position: the intro and the
+  // first loop play once, then the loop repeats
+  const auto content_position =
+    [&] (units::precise_tick_t playback_tick) -> units::precise_tick_t {
+    if (playback_tick >= units::ticks (0.0) && playback_tick < content_end)
+      return playback_tick;
+    auto into_loop = std::fmod (
+      (playback_tick - intro).in (units::ticks), loop.in (units::ticks));
+    if (into_loop < 0.0)
+      into_loop += loop.in (units::ticks);
+    return intro + units::ticks (into_loop);
+  };
+
+  const auto playback_start = midi_playback_tick_;
+  const auto playback_end = playback_start + segment_ticks;
+  auto       playback_tick = playback_start;
+  auto       position = content_position (playback_tick);
+  while (playback_tick < playback_end)
+    {
+      // Contents play contiguously up to their end, then wrap to the loop
+      const auto run_end =
+        min (playback_end, playback_tick + (content_end - position));
+      const auto run_reaches_content_end =
+        run_end == playback_tick + (content_end - position);
+      const auto run_content_end = position + (run_end - playback_tick);
+
+      // In repeated loop passes the contents restart at the loop start, where
+      // note-offs belong to the end of the intro, not to the loop
+      const auto skip_intro_note_offs =
+        playback_tick >= content_end && position == intro;
+
+      for (
+        auto it = std::ranges::lower_bound (
+          content.events_, position, {}, &dsp::TickBasedMidiEvent::time_);
+        it != content.events_.end ()
+        && (it->time_ < run_content_end
+            // Events at the content end (e.g. note-offs) play before the wrap
+            || (run_reaches_content_end && it->time_ <= run_content_end));
+        ++it)
+        {
+          if (
+            skip_intro_note_offs && it->time_ == intro
+            && utils::midi::midi_is_note_off (it->data ()))
+            continue;
+
+          const auto event_playback_tick =
+            playback_tick + (it->time_ - position);
+          const auto event_sample =
+            tempo_map_.tick_to_samples_rounded (
+              dsp::TimelineTick{
+                segment_start_tick + (event_playback_tick - playback_start) })
+            - segment_start;
+          const auto clamped_sample = clamp (
+            event_sample, units::samples (0), length - units::samples (1));
+          output_buffer.push_back (
+            au::floor_as<uint32_t> (
+              units::samples,
+              clamped_sample + time_nfo.buffer_offset_ + block_offset),
+            it->data ());
+        }
+
+      playback_tick = run_end;
+      position = run_reaches_content_end ? intro : run_content_end;
+    }
+
+  midi_playback_tick_ = playback_end;
+  // Report the position as the clip shows it: the intro maps to the clip
+  // start onwards, the loop to the loop start onwards
+  const auto end_position = content_position (playback_end);
+  const auto clip_tick =
+    end_position < intro
+      ? content.clip_start_ + end_position
+      : content.loop_start_ + (end_position - intro);
+  playback_fraction_.store (
+    clip_tick.in (units::ticks) / content.clip_length_.in (units::ticks));
 }
 
 void
@@ -487,29 +595,10 @@ ClipPlaybackDataProvider::process_midi_events (
   process_block<MidiContent> (
     time_nfo,
     [&] (
-      const MidiContent &midi_events,
-      units::sample_t    current_internal_buffer_offset,
-      units::sample_t    samples_to_process_in_chunk,
-      units::sample_t    total_samples_processed,
-      units::sample_t    output_buffer_timestamp_offset) {
-      const auto chunk_end =
-        current_internal_buffer_offset + samples_to_process_in_chunk;
-      for (
-        auto it = std::ranges::lower_bound (
-          midi_events, current_internal_buffer_offset, {},
-          &dsp::SampleBasedMidiEvent::time_);
-        it != midi_events.end () && it->time_ < chunk_end; ++it)
-        {
-          // Event timestamp relative to the start of this chunk, plus the
-          // samples already rendered and the segment's output offset
-          const auto local_timestamp =
-            total_samples_processed
-            + (it->time_ - current_internal_buffer_offset)
-            + output_buffer_timestamp_offset;
-          output_buffer.push_back (
-            au::floor_as<uint32_t> (units::samples, local_timestamp),
-            it->data ());
-        }
+      const MidiContent &content, const PlaybackCache &,
+      units::sample_t block_offset, units::sample_t length) {
+      render_midi_segment (
+        content, time_nfo, block_offset, length, output_buffer);
     },
     [&] (units::sample_t output_timestamp) {
       // Silence notes of the clip that stops or is replaced
@@ -528,8 +617,7 @@ ClipPlaybackDataProvider::process_audio_events (
   std::span<float>                    left_buffer,
   std::span<float>                    right_buffer) noexcept
 {
-  process_block<AudioContent> (
-    time_nfo,
+  const auto render_chunk =
     [&] (
       const AudioContent &audio_buffer,
       units::sample_t     current_internal_buffer_offset,
@@ -577,6 +665,40 @@ ClipPlaybackDataProvider::process_audio_events (
                 1, current_internal_buffer_offset.in<int> (units::samples)),
               actual_samples_to_copy.in<size_t> (units::samples) });
         }
+    };
+
+  process_block<AudioContent> (
+    time_nfo,
+    [&] (
+      const AudioContent &audio_buffer, const PlaybackCache &cache,
+      units::sample_t block_offset, units::sample_t length) {
+      const auto clip_loop_end_samples = tempo_map_.tick_to_samples_rounded (
+        dsp::TimelineTick{ cache.end_position_ });
+      if (clip_loop_end_samples <= units::samples (0))
+        return;
+
+      // A clip that was already playing at the block start follows the
+      // transport position
+      if (block_offset == units::samples (0))
+        update_playback_position (time_nfo, clip_loop_end_samples);
+
+      process_chunks_with_looping (
+        internal_clip_buffer_position_.load (), length, clip_loop_end_samples,
+        time_nfo.buffer_offset_ + block_offset,
+        [&] (
+          units::sample_t current_internal_buffer_offset,
+          units::sample_t samples_to_process_in_chunk,
+          units::sample_t total_samples_processed,
+          units::sample_t output_buffer_timestamp_offset) {
+          render_chunk (
+            audio_buffer, current_internal_buffer_offset,
+            samples_to_process_in_chunk, total_samples_processed,
+            output_buffer_timestamp_offset);
+        });
+
+      playback_fraction_.store (
+        internal_clip_buffer_position_.load ().in<double> (units::samples)
+        / clip_loop_end_samples.in<double> (units::samples));
     },
     [] (units::sample_t) {
       // Audio needs no action when a clip stops or is replaced

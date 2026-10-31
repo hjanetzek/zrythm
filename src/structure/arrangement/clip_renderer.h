@@ -36,11 +36,14 @@ public:
    * @param clip The MIDI clip to serialize.
    * @param events Output MIDI message sequence.
    * @param timeline_range_ticks Currently unused.
+   * @param playback_length Length to render, counted from the clip start;
+   * defaults to the clip's length. Looping continues up to this length.
    */
   static void serialize_to_sequence (
-    const MidiClip              &clip,
-    juce::MidiMessageSequence   &events,
-    std::optional<TimelineRange> timeline_range_ticks = std::nullopt);
+    const MidiClip                 &clip,
+    juce::MidiMessageSequence      &events,
+    std::optional<TimelineRange>    timeline_range_ticks = std::nullopt,
+    std::optional<dsp::ContentTick> playback_length = std::nullopt);
 
   /**
    * @brief Serializes a Chord clip to a MIDI message sequence.
@@ -144,9 +147,11 @@ private:
     const ClipT &clip,
     EventsT     &events,
     // currently unused
-    std::optional<TimelineRange> timeline_range_ticks = std::nullopt)
+    std::optional<TimelineRange>    timeline_range_ticks = std::nullopt,
+    std::optional<dsp::ContentTick> playback_length = std::nullopt)
   {
-    const auto clip_length = clip.length ()->asTick ();
+    const auto clip_length =
+      playback_length.value_or (clip.length ()->asTick ());
 
     for_each_loop_segment (
       clip.clipStartPosition ()->asTick (),

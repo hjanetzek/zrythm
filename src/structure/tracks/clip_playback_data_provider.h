@@ -23,7 +23,29 @@ namespace zrythm::structure::tracks
  */
 class ClipPlaybackDataProvider final
 {
-  using MidiContent = std::vector<dsp::SampleBasedMidiEvent>;
+  /**
+   * @brief MIDI clip contents, timed in ticks from the clip start.
+   *
+   * Playback runs through the intro (clip start to the first loop end) once,
+   * then repeats the loop (the last @ref loop_length_ ticks) indefinitely.
+   */
+  struct MidiContent
+  {
+    /** Events sorted by time, from 0 to intro + loop length. */
+    std::vector<dsp::TickBasedMidiEvent> events_;
+
+    /** Length from the clip start to the first loop end. */
+    units::precise_tick_t intro_length_;
+
+    /** Length of the repeated loop. */
+    units::precise_tick_t loop_length_;
+
+    /** Clip start and loop start markers, and the clip length (for
+     * reporting the position within the clip). */
+    units::precise_tick_t clip_start_;
+    units::precise_tick_t loop_start_;
+    units::precise_tick_t clip_length_;
+  };
   using AudioContent = juce::AudioSampleBuffer;
 
   /**
@@ -36,7 +58,7 @@ class ClipPlaybackDataProvider final
     structure::tracks::ClipQuantizeOption                   quantize_opt_;
 
     /**
-     * @brief End position to loop at.
+     * @brief End position to loop at (audio clips).
      */
     units::precise_tick_t end_position_;
   };
@@ -53,6 +75,10 @@ public:
    *
    * A clip that is already playing continues until that point. Replaces a
    * clip that was queued earlier and has not started yet.
+   *
+   * The clip plays from its clip start to its loop end, then repeats from
+   * its loop start to its loop end; its length is not used. Event times
+   * follow the tempo map from the launch position on.
    *
    * Must be called from the UI thread.
    */
@@ -115,9 +141,12 @@ public:
    */
   auto playing () const { return playing_.load (); }
 
-  auto current_playback_position_in_clip () const
+  /**
+   * @brief Position within the playing clip as a fraction of its length.
+   */
+  double current_playback_fraction () const
   {
-    return internal_clip_buffer_position_.load ();
+    return playback_fraction_.load ();
   }
 
 private:
@@ -182,30 +211,40 @@ private:
    * @brief Renders one block: the playing clip up to the point where a
    * queued clip takes over, then the queued clip.
    *
-   * @param render_chunk Called with the clip contents, the offset within
-   * the clip, the number of samples, the samples already rendered in this
-   * segment and the output buffer offset of the segment.
+   * @param render_segment Called with the clip contents, the playback
+   * cache, the offset of the segment within the block and its length in
+   * samples.
    * @param on_playback_end Called with the output buffer offset at which a
    * playing clip stops or is replaced.
    */
-  template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+  template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
   void process_block (
     const dsp::graph::ProcessBlockInfo &time_nfo,
-    RenderChunkFunc                     render_chunk,
+    RenderSegmentFunc                   render_segment,
     EndFunc on_playback_end) noexcept [[clang::nonblocking]];
 
   /**
    * @brief Renders @p length samples of the clip in @p slot, starting
    * @p block_offset samples into the block.
    */
-  template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+  template <typename ContentT, typename RenderSegmentFunc, typename EndFunc>
   void render_slot (
     uint32_t                            slot,
     const dsp::graph::ProcessBlockInfo &time_nfo,
     units::sample_t                     block_offset,
     units::sample_t                     length,
-    RenderChunkFunc                    &render_chunk,
+    RenderSegmentFunc                  &render_segment,
     EndFunc &on_playback_end) noexcept [[clang::nonblocking]];
+
+  /**
+   * @brief Renders a segment of a MIDI clip, following the tempo map.
+   */
+  void render_midi_segment (
+    const MidiContent                  &content,
+    const dsp::graph::ProcessBlockInfo &time_nfo,
+    units::sample_t                     block_offset,
+    units::sample_t                     length,
+    dsp::MidiEventBuffer &output_buffer) noexcept [[clang::nonblocking]];
 
   /**
    * @brief Template method for processing chunks with looping.
@@ -264,6 +303,22 @@ private:
    * only).
    */
   units::sample_t clip_launch_timeline_position_;
+
+  /**
+   * @brief Timeline tick where the clip was launched (audio thread only).
+   */
+  units::precise_tick_t clip_launch_timeline_tick_;
+
+  /**
+   * @brief Ticks played since the launch (MIDI clips, audio thread only).
+   */
+  units::precise_tick_t midi_playback_tick_;
+
+  /**
+   * @brief Position within the played contents, from 0 to 1 (see
+   * current_playback_fraction()).
+   */
+  std::atomic<double> playback_fraction_{ 0.0 };
 
   static_assert (decltype (internal_clip_buffer_position_)::is_always_lock_free);
   static_assert (decltype (slot_state_)::is_always_lock_free);

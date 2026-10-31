@@ -463,6 +463,220 @@ TEST_F (
   EXPECT_EQ (pitch_60_events[0], units::samples (0));
 }
 
+namespace
+{
+struct TimedNote
+{
+  int         pitch;
+  int64_t     sample;
+  bool        on;
+  friend bool operator== (const TimedNote &, const TimedNote &) = default;
+  friend std::ostream &operator<< (std::ostream &os, const TimedNote &note)
+  {
+    return os << (note.on ? "on " : "off ") << note.pitch << "@" << note.sample;
+  }
+};
+}
+
+class ClipPlaybackDataProviderLoopTest : public ClipPlaybackDataProviderTest
+{
+protected:
+  // MIDI clip with notes given as (pitch, position ticks, length ticks)
+  arrangement::MidiClip * create_midi_clip_with_tick_notes (
+    double                                              length_ticks,
+    const std::vector<std::tuple<int, double, double>> &notes)
+  {
+    auto * clip = create_midi_clip_with_sampled_notes (0.0, length_ticks, {});
+    for (const auto &[pitch, position, note_length] : notes)
+      {
+        auto note_ref = utils::create_object<arrangement::MidiNote> (
+          *registry_, *tempo_map_wrapper_);
+        auto * note = note_ref.get_object_as<arrangement::MidiNote> ();
+        note->setPitch (pitch);
+        note->setVelocity (90);
+        note->position ()->setTicks (position);
+        note->length ()->setTicks (note_length);
+        clip->ArrangerObjectOwner<arrangement::MidiNote>::add_object (note_ref);
+      }
+    return clip;
+  }
+
+  // Plays the clip launched immediately at sample 0 for @p total_samples and
+  // returns note-ons and note-offs with absolute sample positions
+  std::vector<TimedNote>
+  play (const arrangement::MidiClip &clip, int64_t total_samples)
+  {
+    provider_->generate_midi_events (
+      clip, structure::tracks::ClipQuantizeOption::Immediate);
+    std::vector<TimedNote> notes;
+    constexpr int64_t      block = 256;
+    for (int64_t start = 0; start < total_samples; start += block)
+      {
+        auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+        provider_->process_midi_events (
+          create_time_info (static_cast<uint64_t> (start), 0, block),
+          output_buffer);
+        for (const auto &event : output_buffer)
+          {
+            const auto data = event.data ();
+            const bool is_on = utils::midi::midi_is_note_on (data);
+            if (is_on || utils::midi::midi_is_note_off (data))
+              {
+                notes.push_back (
+                  TimedNote{
+                    .pitch = utils::midi::midi_get_note_number (data),
+                    .sample = start + event.time ().in<int64_t> (units::samples),
+                    .on = is_on });
+              }
+          }
+      }
+    std::erase_if (notes, [&] (const TimedNote &note) {
+      return note.sample >= total_samples;
+    });
+    return notes;
+  }
+
+  // Compares note lists, allowing event times to differ by one sample of
+  // rounding
+  static void expect_notes_near (
+    const std::vector<TimedNote> &actual,
+    const std::vector<TimedNote> &expected)
+  {
+    ASSERT_EQ (actual.size (), expected.size ())
+      << ::testing::PrintToString (actual);
+    for (const auto i : std::views::iota (0uz, actual.size ()))
+      {
+        EXPECT_EQ (actual[i].pitch, expected[i].pitch) << "event " << i;
+        EXPECT_EQ (actual[i].on, expected[i].on) << "event " << i;
+        EXPECT_LE (std::abs (actual[i].sample - expected[i].sample), 1)
+          << "event " << i << ": " << actual[i] << " vs " << expected[i];
+      }
+  }
+
+  int64_t samples_at (double ticks) const
+  {
+    return tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (ticks) })
+      .in<int64_t> (units::samples);
+  }
+
+  static std::vector<TimedNote> note_ons (const std::vector<TimedNote> &notes)
+  {
+    return notes | std::views::filter (&TimedNote::on)
+           | std::ranges::to<std::vector> ();
+  }
+};
+
+TEST_F (ClipPlaybackDataProviderLoopTest, PlaysFromClipStartThenRepeatsLoop)
+{
+  // Clip markers: clip start 480, loop 960..1920 (clip length 3840 is not
+  // used by the launcher)
+  auto * clip = create_midi_clip_with_tick_notes (
+    3840.0,
+    {
+      { 60, 0.0,    100.0 }, // before the clip start: never plays
+      { 62, 480.0,  100.0 }, // intro only
+      { 64, 960.0,  100.0 }, // loop start
+      { 65, 1200.0, 100.0 }, // inside the loop
+      { 67, 2400.0, 100.0 }, // after the loop end: never plays
+  });
+  clip->set_loop_range (
+    dsp::ContentTick{ units::ticks (480.0) },
+    dsp::ContentTick{ units::ticks (960.0) },
+    dsp::ContentTick{ units::ticks (1920.0) });
+
+  // Playback ticks: intro 0..1440 (clip 480..1920), then the loop repeats
+  // every 960 ticks
+  const auto notes = note_ons (play (*clip, samples_at (4000.0)));
+  const std::vector<TimedNote> expected = {
+    { 62, samples_at (0.0),    true },
+    { 64, samples_at (480.0),  true },
+    { 65, samples_at (720.0),  true },
+    { 64, samples_at (1440.0), true },
+    { 65, samples_at (1680.0), true },
+    { 64, samples_at (2400.0), true },
+    { 65, samples_at (2640.0), true },
+    { 64, samples_at (3360.0), true },
+    { 65, samples_at (3600.0), true },
+  };
+  expect_notes_near (notes, expected);
+}
+
+TEST_F (
+  ClipPlaybackDataProviderLoopTest,
+  ClipStartAfterLoopStartPlaysFullLoopAfterIntro)
+{
+  // Clip start 1440 lies inside the loop 960..1920
+  auto * clip = create_midi_clip_with_tick_notes (
+    1920.0,
+    {
+      { 64, 960.0,  100.0 },
+      { 65, 1500.0, 100.0 },
+  });
+  clip->set_loop_range (
+    dsp::ContentTick{ units::ticks (1440.0) },
+    dsp::ContentTick{ units::ticks (960.0) },
+    dsp::ContentTick{ units::ticks (1920.0) });
+
+  // Intro 0..480 (clip 1440..1920), then loops of 960 from the loop start
+  const auto notes = note_ons (play (*clip, samples_at (2400.0)));
+  const std::vector<TimedNote> expected = {
+    { 65, samples_at (60.0),   true },
+    { 64, samples_at (480.0),  true },
+    { 65, samples_at (1020.0), true },
+    { 64, samples_at (1440.0), true },
+    { 65, samples_at (1980.0), true },
+  };
+  expect_notes_near (notes, expected);
+}
+
+TEST_F (ClipPlaybackDataProviderLoopTest, EventTimesFollowTempoChanges)
+{
+  // 120 BPM up to tick 960, 60 BPM afterwards
+  tempo_map_->add_tempo_event (
+    units::ticks (960), units::bpm (60.0), dsp::TempoMap::CurveType::Constant);
+
+  auto * clip = create_midi_clip_with_tick_notes (
+    3840.0,
+    {
+      { 60, 0.0,    100.0 },
+      { 62, 960.0,  100.0 },
+      { 64, 1920.0, 100.0 },
+  });
+
+  const auto notes = note_ons (play (*clip, samples_at (2000.0)));
+  const std::vector<TimedNote> expected = {
+    { 60, samples_at (0.0),    true },
+    { 62, samples_at (960.0),  true },
+    { 64, samples_at (1920.0), true },
+  };
+  expect_notes_near (notes, expected);
+  // 960 ticks at 60 BPM take twice as long as at 120 BPM
+  EXPECT_EQ (samples_at (1920.0) - samples_at (960.0), 2 * samples_at (960.0));
+}
+
+TEST_F (ClipPlaybackDataProviderLoopTest, NoteEndingAtLoopEndIsReleasedEveryLoop)
+{
+  // A note lasting until the loop end
+  auto * clip = create_midi_clip_with_tick_notes (
+    960.0,
+    {
+      { 60, 480.0, 480.0 }
+  });
+
+  // Play four loops, plus a little to include the last note-off
+  const auto notes = play (*clip, samples_at (960.0 * 4) + 512);
+  const auto ons = std::ranges::count_if (notes, &TimedNote::on);
+  const auto offs = std::ranges::count_if (notes, [] (const TimedNote &n) {
+    return !n.on;
+  });
+  EXPECT_EQ (ons, 4);
+  EXPECT_EQ (offs, 4);
+  // Each note-off comes before the next note-on
+  for (const auto i : std::views::iota (0uz, notes.size ()))
+    EXPECT_EQ (notes[i].on, i % 2 == 0) << "event " << i;
+}
+
 TEST_F (ClipPlaybackDataProviderTest, MultipleNotesInRegion)
 {
   // Create a MIDI clip with multiple notes
@@ -979,8 +1193,14 @@ TEST_F (
   EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ());
   EXPECT_TRUE (provider_->playing ());
   EXPECT_FALSE (provider_->launch_pending ());
-  EXPECT_EQ (
-    provider_->current_playback_position_in_clip (), units::samples (156));
+  // B has played 156 samples of its 400-tick contents
+  const auto played_ticks =
+    (tempo_map_->samples_to_tick (units::samples (beat_start + 156))
+     - tempo_map_->samples_to_tick (units::samples (beat_start)))
+      .asQuantity ()
+      .in (units::ticks);
+  EXPECT_NEAR (
+    provider_->current_playback_fraction (), played_ticks / 400.0, 1e-9);
 }
 
 TEST_F (ClipPlaybackDataProviderTest, NewerQueuedClipReplacesEarlierQueuedClip)

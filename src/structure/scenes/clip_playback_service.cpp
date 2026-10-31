@@ -256,28 +256,8 @@ ClipPlaybackService::getClipPlaybackPosition (ClipSlot * clipSlot) const
           if (processor == nullptr)
             return -1.0;
 
-          // Get the internal buffer position from the event provider
-          auto internal_position =
-            processor->clip_playback_data_provider ()
-              .current_playback_position_in_clip ();
-
-          // Get the clip to determine its length
-          auto * clip = clipSlot->clip ();
-          if (clip == nullptr)
-            return -1.0;
-
-          // Clip duration in samples (warp-aware).
-          auto clip_length_samples = clip->get_sample_duration ();
-
-          // Calculate the position as a percentage
-          if (clip_length_samples > units::samples (0))
-            {
-              return static_cast<double> (internal_position.in (units::samples))
-                     / static_cast<double> (
-                       clip_length_samples.in (units::samples));
-            }
-
-          return 0.0;
+          return processor->clip_playback_data_provider ()
+            .current_playback_fraction ();
         }
     }
 

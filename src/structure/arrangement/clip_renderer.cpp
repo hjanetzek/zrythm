@@ -225,11 +225,12 @@ ClipRenderer::handle_chord_clip_range (
 
 void
 ClipRenderer::serialize_to_sequence (
-  const MidiClip              &clip,
-  juce::MidiMessageSequence   &events,
-  std::optional<TimelineRange> timeline_range_ticks)
+  const MidiClip                 &clip,
+  juce::MidiMessageSequence      &events,
+  std::optional<TimelineRange>    timeline_range_ticks,
+  std::optional<dsp::ContentTick> playback_length)
 {
-  serialize_clip (clip, events, timeline_range_ticks);
+  serialize_clip (clip, events, timeline_range_ticks, playback_length);
 }
 
 void
