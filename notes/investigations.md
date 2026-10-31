@@ -205,12 +205,37 @@ Key files:
    "Looping Behavior" in AGENTS.md). Whether
    `ClipRenderer::serialize_to_sequence` already applies the loop for MIDI
    is still to be checked.
+   **Checked:** `ClipRenderer` does apply clip start and loops, but over
+   the clip's *length*, as the clip plays on the timeline
+   (`for_each_loop_segment(clip_start, loop_start, loop_end,
+   clip_length)`). The launcher then wraps that rendering back to 0. It
+   only differs from the expected launcher behaviour (clip start → loop
+   end, then loop start → loop end forever, length ignored) when the
+   markers are moved or the length isn't "clip start + n loops".
+   - **MIDI fix (contained):** render with playback length
+     `intro + loop_length`, where `intro = loop_end - clip_start` (so one
+     full loop always follows the intro, also when the clip start is
+     after the loop start), and wrap to `intro` instead of 0. This needs a
+     length parameter on `serialize_to_sequence`.
+   - **Audio (bigger):** `serialize_to_buffer` is tied to the clip's
+     timeline placement. It uses the tempo at the clip position, the
+     warp map relative to the clip start tick, `native_clip_len` from
+     the length, and fades at the clip boundaries. A launcher rendering
+     needs a position-independent variant, and a decision on fades at
+     loop wraps (probably only a short declick).
 6. **Tempo handling.** MIDI event times are converted with
    `tick_to_samples_rounded` at timeline ticks counted from 0, i.e. using
    the tempo at the start of the project rather than at the launch
    position. A tempo change partway through a clip, or a launch after a
    tempo change, gives wrong event timing (verified by reading). The loop
    length is converted the same way.
+   **Proposed fix:** keep MIDI events in ticks in the cache and convert on
+   the audio thread relative to the launch:
+   `tick_to_samples(launch_tick + event_tick) - launch_sample`. Loop
+   wraps would be tracked in ticks too. This changes how the provider
+   tracks position (ticks instead of samples), so it fits together with
+   the MIDI part of 5. Audio follows tempo only through warping, which is
+   part of the audio rendering question above.
 7. **Seeking before the launch point (verified by reading).**
    `update_playback_position` computes
    `(current - launch) % loop_end`. If the playhead moves before the
