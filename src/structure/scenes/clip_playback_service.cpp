@@ -135,6 +135,24 @@ ClipPlaybackService::stopAllClips (
     }
 }
 
+void
+ClipPlaybackService::stopTrackClips (
+  tracks::Track *                       track,
+  structure::tracks::ClipQuantizeOption quantize)
+{
+  if (track == nullptr)
+    {
+      z_warning ("Invalid track provided to stopTrackClips");
+      return;
+    }
+
+  const auto it = playing_clips_.find (track->get_uuid ());
+  if (it == playing_clips_.end ())
+    return;
+
+  stopClip (track, it->second, quantize);
+}
+
 bool
 ClipPlaybackService::isClipPlaying (ClipSlot * clipSlot) const
 {
@@ -238,8 +256,29 @@ ClipPlaybackService::setTrackToTimelineMode (tracks::Track * track)
   // Cancel any pending clip operations for this track
   cancelPendingClipOperations (track);
 
+  // Stop a clip that is already playing
+  const auto it = playing_clips_.find (track->get_uuid ());
+  if (it != playing_clips_.end ())
+    {
+      processor->clip_playback_data_provider ().queue_stop_playback (
+        structure::tracks::ClipQuantizeOption::Immediate);
+      updateClipSlotState (it->second, ClipSlot::ClipState::Stopped);
+      auto * clip_slot = it->second;
+      playing_clips_.erase (it);
+      Q_EMIT clipStopped (track, clip_slot);
+    }
+
   // Set the track to timeline mode
   track->setClipLauncherMode (false);
+}
+
+void
+ClipPlaybackService::setAllTracksToTimelineMode ()
+{
+  for (const auto &track : track_collection_.tracks ())
+    {
+      setTrackToTimelineMode (track.get ());
+    }
 }
 
 void

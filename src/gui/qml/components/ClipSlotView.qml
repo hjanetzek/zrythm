@@ -104,10 +104,9 @@ Control {
       id: tapHandler
 
       onDoubleTapped: {
-        console.log("double tapped");
-        let midiRegion = root.objectCreator.addEmptyMidiClipToClip(root.track, root.clipSlot) as MidiClip;
-        root.objectCreator.addMidiNote(midiRegion, 0, 64);
-        root.objectCreator.addMidiNote(midiRegion, 120, 68);
+        if (root.clipSlot.clipObject === null) {
+          root.objectCreator.addEmptyMidiClipToClip(root.track, root.clipSlot);
+        }
       }
     }
 
@@ -117,7 +116,6 @@ Control {
       anchors.fill: parent
 
       onDropped: drop => {
-        console.log("Drop on clip slot");
         let uniqueFilePaths = DragUtils.getUniqueFilePaths(drop);
         root.filesDropped(uniqueFilePaths);
       }

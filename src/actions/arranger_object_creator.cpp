@@ -428,11 +428,18 @@ ArrangerObjectCreator::addEmptyMidiClipToClip (
   structure::tracks::Track *    track,
   structure::scenes::ClipSlot * clipSlot)
 {
+  if (track == nullptr || clipSlot == nullptr)
+    {
+      z_warning (
+        "Invalid track or clip slot provided to addEmptyMidiClipToClip");
+      return nullptr;
+    }
+
   auto mr_ref =
     arranger_object_factory_.get_builder<structure::arrangement::MidiClip> ()
       .with_start_ticks (units::ticks (0))
       .build_in_registry ();
-  clipSlot->setClip (mr_ref.get_object_as<structure::arrangement::MidiClip> ());
+  add_object_to_clip_slot (*track, *clipSlot, mr_ref);
   return mr_ref.get_object_as<structure::arrangement::MidiClip> ();
 }
 

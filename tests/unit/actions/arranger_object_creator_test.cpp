@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-ZrythmLicense
 
 #include "actions/arranger_object_creator.h"
+#include "structure/scenes/clip_slot.h"
 #include "structure/tracks/track_factory.h"
 #include "structure/tracks/track_routing.h"
 #include "structure/tracks/tracklist.h"
@@ -273,6 +274,42 @@ TEST_F (ArrangerObjectCreatorTest, AddMidiClipForRecordingUndoRedo)
   EXPECT_TRUE (std::ranges::any_of (midi_clips, [&] (auto * r) {
     return r == clip;
   }));
+}
+
+TEST_F (ArrangerObjectCreatorTest, AddEmptyMidiClipToClipSlotUndoRedo)
+{
+  auto track_ref =
+    track_factory_->create_empty_track<structure::tracks::MidiTrack> ();
+  auto * midi_track = track_ref.get_object_as<structure::tracks::MidiTrack> ();
+  track_collection_->add_track (track_ref);
+
+  auto clip_slot_ref =
+    utils::create_object<structure::scenes::ClipSlot> (registry_, registry_);
+  auto * clip_slot = clip_slot_ref.get ();
+
+  const int initial_count = undo_stack_->count ();
+  auto *    clip = creator->addEmptyMidiClipToClip (midi_track, clip_slot);
+  ASSERT_NE (clip, nullptr);
+  EXPECT_EQ (undo_stack_->count (), initial_count + 1);
+  EXPECT_EQ (clip_slot->clip (), clip);
+  EXPECT_GT (clip->length ()->ticks (), 0.0);
+
+  undo_stack_->undo ();
+  EXPECT_EQ (clip_slot->clip (), nullptr);
+
+  undo_stack_->redo ();
+  EXPECT_EQ (clip_slot->clip (), clip);
+}
+
+TEST_F (ArrangerObjectCreatorTest, AddEmptyMidiClipToClipRefusesNullArguments)
+{
+  auto clip_slot_ref =
+    utils::create_object<structure::scenes::ClipSlot> (registry_, registry_);
+  const int initial_count = undo_stack_->count ();
+
+  EXPECT_EQ (
+    creator->addEmptyMidiClipToClip (nullptr, clip_slot_ref.get ()), nullptr);
+  EXPECT_EQ (undo_stack_->count (), initial_count);
 }
 
 TEST_F (ArrangerObjectCreatorTest, AddMidiControlEvent)

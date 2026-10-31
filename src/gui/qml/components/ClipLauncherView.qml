@@ -127,7 +127,7 @@ Item {
             Label {
               id: sceneHeaderLabel
 
-              text: "Scene " + (sceneHeaderRow.index + 1)
+              text: sceneHeaderRow.scene.name !== "" ? sceneHeaderRow.scene.name : qsTr("Scene %1").arg(sceneHeaderRow.index + 1)
             }
           }
         }
@@ -155,6 +155,8 @@ Item {
 
     ToolButton {
       icon.source: root.switchToTimelineIconSource
+
+      onClicked: root.clipPlaybackService.setAllTracksToTimelineMode()
 
       ToolTip {
         text: qsTr("Switch Playback to Timeline")
@@ -269,9 +271,7 @@ Item {
               onDoubleTapped: {
                 const newScene = root.clipLauncher.addScene();
                 const newClipSlot = newScene.clipSlots.clipSlotForTrack(phantomClipSlot.track);
-                let midiRegion = root.objectCreator.addEmptyMidiClipToClip(phantomClipSlot.track, newClipSlot) as MidiClip;
-                root.objectCreator.addMidiNote(midiRegion, 0, 64);
-                root.objectCreator.addMidiNote(midiRegion, 120, 68);
+                root.objectCreator.addEmptyMidiClipToClip(phantomClipSlot.track, newClipSlot);
               }
             }
           }
@@ -327,10 +327,12 @@ Item {
       required property Track track
 
       icon.source: root.stopIconSource
-      implicitHeight: track.fullVisibleHeight
+      implicitHeight: trackStopButton.track.fullVisibleHeight
+
+      onClicked: root.clipPlaybackService.stopTrackClips(trackStopButton.track)
 
       ToolTip {
-        text: "Stop " + trackStopButton.track.name
+        text: qsTr("Stop %1").arg(trackStopButton.track.name)
       }
     }
   }
@@ -350,7 +352,7 @@ Item {
       onClicked: root.clipPlaybackService.setTrackToTimelineMode(track)
 
       ToolTip {
-        text: "Switch Playback to Timeline"
+        text: qsTr("Switch Playback to Timeline")
       }
     }
   }

@@ -94,6 +94,19 @@ public:
     structure::tracks::ClipQuantizeOption quantize =
       structure::tracks::ClipQuantizeOption::NextBar);
 
+  /**
+   * @brief Stop the clip playing or queued to play on a track.
+   *
+   * Does nothing if no clip is playing on the track.
+   *
+   * @param track The track to stop
+   * @param quantize Quantization option for timing
+   */
+  Q_INVOKABLE void stopTrackClips (
+    tracks::Track *                       track,
+    structure::tracks::ClipQuantizeOption quantize =
+      structure::tracks::ClipQuantizeOption::NextBar);
+
   // ========================================================================
   // State Queries
   // ========================================================================
@@ -136,9 +149,19 @@ public:
   /**
    * @brief Set a track to use timeline mode.
    *
+   * Pending clip operations on the track are cancelled and a playing clip
+   * is stopped immediately.
+   *
    * @param track The track to configure
    */
   Q_INVOKABLE void setTrackToTimelineMode (tracks::Track * track);
+
+  /**
+   * @brief Set all tracks to use timeline mode.
+   *
+   * @see setTrackToTimelineMode()
+   */
+  Q_INVOKABLE void setAllTracksToTimelineMode ();
 
   /**
    * @brief Cancel any pending clip operations for a track.
