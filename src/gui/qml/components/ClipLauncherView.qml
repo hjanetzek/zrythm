@@ -254,6 +254,44 @@ Item {
       }
     }
 
+    ComboBox {
+      id: recordingLengthComboBox
+
+      Layout.preferredHeight: root.rulerHeight
+      currentIndex: recordingLengthComboBox.indexOfValue(root.clipSlotRecorder.fixedLengthBars)
+      textRole: "text"
+      valueRole: "value"
+
+      model: [
+        {
+          text: qsTr("Free"),
+          value: 0
+        },
+        {
+          text: qsTr("1 Bar"),
+          value: 1
+        },
+        {
+          text: qsTr("2 Bars"),
+          value: 2
+        },
+        {
+          text: qsTr("4 Bars"),
+          value: 4
+        },
+        {
+          text: qsTr("8 Bars"),
+          value: 8
+        }
+      ]
+
+      onActivated: root.clipSlotRecorder.fixedLengthBars = recordingLengthComboBox.currentValue
+
+      ToolTip {
+        text: qsTr("Recording Length")
+      }
+    }
+
     ScrollView {
       id: sceneHeadersScrollView
 

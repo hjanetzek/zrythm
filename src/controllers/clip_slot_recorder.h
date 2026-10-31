@@ -22,12 +22,17 @@ namespace zrythm::controllers
  *
  * Recording starts and stops at the clip launcher's launch quantization
  * point. While waiting for the start the slot is RecordQueued, then
- * Recording; when the recording ends it is Stopped and holds the recorded
- * clip.
+ * Recording; when the recording ends it holds the recorded clip. A
+ * recording stopped with stopRecording() while the transport rolls
+ * continues seamlessly into playback of the recorded clip from the stop
+ * point; otherwise the slot is left Stopped.
  */
 class ClipSlotRecorder : public QObject
 {
   Q_OBJECT
+  Q_PROPERTY (
+    int fixedLengthBars READ fixedLengthBars WRITE setFixedLengthBars NOTIFY
+      fixedLengthBarsChanged)
   QML_ELEMENT
   QML_UNCREATABLE ("")
 
@@ -56,6 +61,17 @@ public:
   {
     clip_playback_service_ = service;
   }
+
+  /**
+   * @brief Length of new recordings in bars, or 0 to record until
+   * stopRecording() is called.
+   *
+   * A fixed-length recording ends by itself and continues into playback
+   * like a stopped one.
+   */
+  int           fixedLengthBars () const { return fixed_length_bars_; }
+  void          setFixedLengthBars (int bars);
+  Q_SIGNAL void fixedLengthBarsChanged ();
 
   /**
    * @brief Whether recording into @p clipSlot of @p track can start: the
@@ -115,6 +131,9 @@ private:
   {
     QPointer<structure::scenes::ClipSlot> clip_slot;
     units::sample_t                       start_position;
+
+    /** Where stopRecording() ends the recording, once requested. */
+    std::optional<units::sample_t> requested_end_position;
   };
 
   RecordingMaterializer                           &materializer_;
@@ -126,6 +145,8 @@ private:
   QPointer<structure::scenes::ClipPlaybackService> clip_playback_service_;
 
   std::unordered_map<structure::tracks::TrackUuid, SlotRecording> recordings_;
+
+  int fixed_length_bars_{};
 
   /** Polls the playhead while recordings wait for their start. */
   utils::QObjectUniquePtr<QTimer> state_timer_;

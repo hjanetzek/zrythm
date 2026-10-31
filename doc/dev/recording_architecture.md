@@ -152,6 +152,33 @@ Transport record OFF → endMacro()
 
 The macro lifecycle is driven by `RecordingCoordinator` signals, not inferred from packet content. The `recordingSessionEnded` signal is the sole trigger for `RecordingMaterializer::finalize_recording_macro()`. This prevents premature macro closure in multi-track scenarios.
 
+## Clip Slot Recording
+
+A track can record into a clip launcher slot instead of the timeline. `ClipSlotRecorder` (`src/controllers/`) starts and stops such recordings at the clip launcher's launch quantization point and sets the slot's `RecordQueued`/`Recording` states; `RecordingMaterializer` does the recording itself.
+
+```mermaid
+sequenceDiagram
+    participant UI as Clip Slot
+    participant REC as ClipSlotRecorder
+    participant RM as RecordingMaterializer
+    participant PS as ClipPlaybackService
+
+    UI->>REC: recordIntoClipSlot(track, slot)
+    REC->>RM: begin_clip_slot_recording(track, start)
+    Note over RM: Packets inside [start, end) go into a new clip,<br/>attached to the slot with AddClipToClipSlotCommand
+    UI->>REC: stopRecording(track)
+    REC->>RM: end_clip_slot_recording(track, end)
+    RM-->>REC: clipSlotRecordingFinished(track, clip)
+    REC->>PS: launch_clip_aligned(track, slot, end)
+```
+
+- The recording window is a timeline range: packets are trimmed to it, independent of the transport's record button, and the track's timeline recording is suspended while it runs.
+- A fixed-length recording sets the window end when it starts.
+- The recording also ends at a gap in the recorded data (transport loop or seek) and when the recording session ends.
+- The finished clip starts at position 0 and loops over the recorded length; held MIDI notes end at the window end.
+- Attaching the clip is a single undo command; clip slot recordings do not open the "Record" macro.
+- A recording that ended at its requested end while the transport rolls continues into playback with an aligned launch: the clip plays as if launched at the end position, since it is complete only after the last packets are drained.
+
 ## Punch Recording
 
 `TrackProcessor::handle_recording()` splits each process block at punch in/out boundaries. Only the ranges falling within the punch window generate recording callbacks. The transport's `has_recording_preroll_frames_remaining()` gate ensures recording doesn't start until preroll (e.g., a 1-bar count-in) has elapsed.

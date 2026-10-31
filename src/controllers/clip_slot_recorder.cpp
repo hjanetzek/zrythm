@@ -94,6 +94,21 @@ ClipSlotRecorder::next_quantization_tick (
   };
 }
 
+void
+ClipSlotRecorder::setFixedLengthBars (int bars)
+{
+  if (bars < 0)
+    {
+      z_warning ("Fixed recording length must not be negative, got {}", bars);
+      return;
+    }
+  if (fixed_length_bars_ != bars)
+    {
+      fixed_length_bars_ = bars;
+      Q_EMIT fixedLengthBarsChanged ();
+    }
+}
+
 units::sample_t
 ClipSlotRecorder::next_quantization_point () const
 {
@@ -145,9 +160,25 @@ ClipSlotRecorder::recordIntoClipSlot (
   if (!started)
     return;
 
-  recordings_.emplace (
-    track->get_uuid (),
-    SlotRecording{ .clip_slot = clipSlot, .start_position = start });
+  auto &recording =
+    recordings_
+      .emplace (
+        track->get_uuid (),
+        SlotRecording{ .clip_slot = clipSlot, .start_position = start })
+      .first->second;
+
+  // A fixed-length recording ends the given number of bars after its start
+  if (fixed_length_bars_ > 0)
+    {
+      auto end_position = tempo_map_.tick_to_musical_position (
+        au::round_as<int64_t> (
+          units::ticks, tempo_map_.samples_to_tick (start).asQuantity ()));
+      end_position.bar += fixed_length_bars_;
+      const auto end = tempo_map_.tick_to_samples_rounded (
+        dsp::TimelineTick{ tempo_map_.musical_position_to_tick (end_position) });
+      recording.requested_end_position = end;
+      materializer_.end_clip_slot_recording (track->get_uuid (), end);
+    }
   clipSlot->setState (structure::scenes::ClipSlot::ClipState::RecordQueued);
 
   // The track's playing clip gives way to the recording
@@ -166,11 +197,15 @@ ClipSlotRecorder::recordIntoClipSlot (
 void
 ClipSlotRecorder::stopRecording (structure::tracks::Track * track)
 {
-  if (track == nullptr || !recordings_.contains (track->get_uuid ()))
+  if (track == nullptr)
+    return;
+  const auto it = recordings_.find (track->get_uuid ());
+  if (it == recordings_.end ())
     return;
 
-  materializer_.end_clip_slot_recording (
-    track->get_uuid (), next_quantization_point ());
+  const auto end = next_quantization_point ();
+  it->second.requested_end_position = end;
+  materializer_.end_clip_slot_recording (track->get_uuid (), end);
 }
 
 void
@@ -214,10 +249,25 @@ ClipSlotRecorder::on_clip_slot_recording_finished (
   if (node.empty ())
     return;
 
-  auto * clip_slot = node.mapped ().clip_slot.data ();
+  const auto &recording = node.mapped ();
+  auto *      clip_slot = recording.clip_slot.data ();
   if (clip_slot == nullptr)
     return;
   clip_slot->setState (structure::scenes::ClipSlot::ClipState::Stopped);
+
+  // A stopped recording continues into playback as if the clip had been
+  // launched at the stop point
+  if (
+    clip != nullptr && recording.requested_end_position.has_value ()
+    && clip_playback_service_ != nullptr
+    && transport_.getPlayState () == dsp::ITransport::PlayState::Rolling
+    && track_collection_.contains (track_id))
+    {
+      clip_playback_service_->launch_clip_aligned (
+        track_collection_.track_ref_at_id (track_id).get (), clip_slot,
+        *recording.requested_end_position);
+    }
+
   Q_EMIT clipSlotRecorded (clip_slot, clip);
 }
 
