@@ -744,6 +744,119 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizationTimingAccuracy)
   EXPECT_FALSE (has_timestamp_overflow (output_buffer));
 }
 
+TEST_F (ClipPlaybackDataProviderTest, QuantizedStartWithinBlockIsSampleAccurate)
+{
+  auto clip = create_simple_region ();
+  provider_->generate_midi_events (
+    *clip, structure::tracks::ClipQuantizeOption::NextBeat);
+
+  // Block that contains the beat boundary 100 samples after its start
+  const auto beat_start_samples = tempo_map_->tick_to_samples_rounded (
+    dsp::TimelineTick{ units::ticks (960.0) });
+  const auto block_start =
+    static_cast<uint64_t> (beat_start_samples.in (units::sample)) - 100;
+
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (block_start, 0, 256), output_buffer);
+
+  const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+  ASSERT_EQ (pitch_60_events.size (), 1);
+  EXPECT_EQ (pitch_60_events[0], units::samples (100));
+  EXPECT_TRUE (provider_->playing ());
+}
+
+TEST_F (ClipPlaybackDataProviderTest, QuantizedStartWithinBlockAddsBufferOffset)
+{
+  auto clip = create_simple_region ();
+  provider_->generate_midi_events (
+    *clip, structure::tracks::ClipQuantizeOption::NextBar);
+
+  // Sub-block starting 32 samples into the output buffer, with the bar
+  // boundary 50 samples after the sub-block start
+  const auto bar_start_samples = tempo_map_->tick_to_samples_rounded (
+    dsp::TimelineTick{ units::ticks (3840.0) });
+  const auto block_start =
+    static_cast<uint64_t> (bar_start_samples.in (units::sample)) - 50;
+
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (block_start, 32, 128), output_buffer);
+
+  const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+  ASSERT_EQ (pitch_60_events.size (), 1);
+  EXPECT_EQ (pitch_60_events[0], units::samples (82));
+}
+
+TEST_F (ClipPlaybackDataProviderTest, QuantizedStartAtBlockEndStartsInNextBlock)
+{
+  auto clip = create_simple_region ();
+  provider_->generate_midi_events (
+    *clip, structure::tracks::ClipQuantizeOption::NextBeat);
+
+  // Block that ends exactly on the beat boundary
+  const auto beat_start_samples = tempo_map_->tick_to_samples_rounded (
+    dsp::TimelineTick{ units::ticks (960.0) });
+  const auto beat_start =
+    static_cast<uint64_t> (beat_start_samples.in (units::sample));
+
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (beat_start - 256, 0, 256), output_buffer);
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ());
+  EXPECT_FALSE (provider_->playing ());
+
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start, 0, 256), output_buffer);
+  const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+  ASSERT_EQ (pitch_60_events.size (), 1);
+  EXPECT_EQ (pitch_60_events[0], units::samples (0));
+}
+
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  AudioQuantizedStartWithinBlockIsSampleAccurate)
+{
+  auto clip = create_simple_audio_clip ();
+  provider_->generate_audio_events (
+    *clip, structure::tracks::ClipQuantizeOption::NextBar);
+
+  // Block that contains the bar boundary 100 samples after its start
+  const auto bar_start_samples = tempo_map_->tick_to_samples_rounded (
+    dsp::TimelineTick{ units::ticks (3840.0) });
+  const auto block_start =
+    static_cast<uint64_t> (bar_start_samples.in (units::sample)) - 100;
+
+  std::vector<float> output_left (256, 0.0f);
+  std::vector<float> output_right (256, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (block_start, 0, 256), output_left, output_right);
+
+  // Reference: the same clip launched immediately at a block start
+  ClipPlaybackDataProvider reference_provider (*tempo_map_);
+  reference_provider.generate_audio_events (
+    *clip, structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> reference_left (256, 0.0f);
+  std::vector<float> reference_right (256, 0.0f);
+  reference_provider.process_audio_events (
+    create_time_info (0, 0, 256), reference_left, reference_right);
+
+  // Silence before the bar boundary, then the clip from its first sample
+  for (const auto i : std::views::iota (0uz, 100uz))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], 0.0f) << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], 0.0f) << "at sample " << i;
+    }
+  for (const auto i : std::views::iota (100uz, output_left.size ()))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], reference_left[i - 100])
+        << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], reference_right[i - 100])
+        << "at sample " << i;
+    }
+}
+
 TEST_F (ClipPlaybackDataProviderTest, StateManagementAcrossBuffers)
 {
   // Create a MIDI clip with notes at different positions

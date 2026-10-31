@@ -126,11 +126,10 @@ ClipPlaybackDataProvider::process_midi_events (
     update_playback_position (time_nfo, clip_loop_end_samples);
 
     // Handle quantization and get start position and samples to process
-    auto [internal_buffer_start_offset, samples_to_process] =
-      handle_quantization_and_start (
-        time_nfo, clip_loop_end_samples, cache.quantize_opt_);
+    const auto range = handle_quantization_and_start (
+      time_nfo, clip_loop_end_samples, cache.quantize_opt_);
 
-    if (samples_to_process == units::samples (0))
+    if (range.samples_to_process == units::samples (0))
       {
         // Not time to start yet
         return;
@@ -138,8 +137,8 @@ ClipPlaybackDataProvider::process_midi_events (
 
     // Process MIDI chunks with looping using the common template method
     process_chunks_with_looping (
-      internal_buffer_start_offset, samples_to_process, clip_loop_end_samples,
-      time_nfo.buffer_offset_,
+      range.internal_buffer_start_offset, range.samples_to_process,
+      clip_loop_end_samples, range.output_buffer_timestamp_offset,
       [&] (
         units::sample_t current_internal_buffer_offset,
         units::sample_t samples_to_process_in_chunk,
@@ -268,7 +267,7 @@ ClipPlaybackDataProvider::update_playback_position (
   last_seen_timeline_position_.store (current_timeline_position);
 }
 
-std::pair<units::sample_t, units::sample_t>
+ClipPlaybackDataProvider::BlockPlaybackRange
 ClipPlaybackDataProvider::handle_quantization_and_start (
   const dsp::graph::ProcessBlockInfo   &time_nfo,
   units::sample_t                       clip_loop_end_samples,
@@ -395,37 +394,46 @@ ClipPlaybackDataProvider::handle_quantization_and_start (
           if (!should_start)
             {
               // Not time to start yet
-              return { units::samples (0), units::samples (0) };
+              return {
+                units::samples (0), units::samples (0),
+                output_buffer_timestamp_offset
+              };
             }
 
-          playing_.store (true);
-
-          const auto quantized_timeline_position =
+          // The quantization point can round to slightly before the block
+          // start when the block starts exactly on it
+          const auto quantized_timeline_position = max (
             tempo_map_.tick_to_samples_rounded (
               tempo_map_.musical_position_to_tick (
-                musical_pos_to_start_playing_at));
+                musical_pos_to_start_playing_at)),
+            current_timeline_position);
 
-          clip_launch_timeline_position_.store (quantized_timeline_position);
-
-          // Calculate where to start in our own buffer
-          internal_buffer_start_offset = units::samples (0);
-
-          // Calculate the offset to apply when writing to the output buffer
-          output_buffer_timestamp_offset =
+          // Distance from the block start to the quantization point
+          const auto samples_until_start =
             quantized_timeline_position - current_timeline_position;
           if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
             z_debug (
-              "Calculated output_buffer_timestamp_offset: {} samples",
-              output_buffer_timestamp_offset.in (units::samples));
+              "Samples until quantized start: {}",
+              samples_until_start.in (units::samples));
 
-          if (output_buffer_timestamp_offset >= samples_to_process)
+          if (samples_until_start >= samples_to_process)
             {
-              return { units::samples (0), units::samples (0) };
+              // The quantization point is at the block end: start in the
+              // next block
+              return {
+                units::samples (0), units::samples (0),
+                output_buffer_timestamp_offset
+              };
             }
 
-          // Adjust how many samples we need to play
-          samples_to_process =
-            samples_to_process - output_buffer_timestamp_offset;
+          playing_.store (true);
+          clip_launch_timeline_position_.store (quantized_timeline_position);
+
+          // Start at the beginning of our own buffer, at the quantization
+          // point within the output buffer
+          internal_buffer_start_offset = units::samples (0);
+          output_buffer_timestamp_offset += samples_until_start;
+          samples_to_process -= samples_until_start;
           if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
             z_debug (
               "Adjusted samples_to_process: {} samples",
@@ -433,7 +441,10 @@ ClipPlaybackDataProvider::handle_quantization_and_start (
         }
     }
 
-  return { internal_buffer_start_offset, samples_to_process };
+  return {
+    internal_buffer_start_offset, samples_to_process,
+    output_buffer_timestamp_offset
+  };
 }
 
 template <typename ProcessFunc>
@@ -525,11 +536,10 @@ ClipPlaybackDataProvider::process_audio_events (
     update_playback_position (time_nfo, clip_loop_end_samples);
 
     // Handle quantization and get start position and samples to process
-    auto [internal_buffer_start_offset, samples_to_process] =
-      handle_quantization_and_start (
-        time_nfo, clip_loop_end_samples, cache.quantize_opt_);
+    const auto range = handle_quantization_and_start (
+      time_nfo, clip_loop_end_samples, cache.quantize_opt_);
 
-    if (samples_to_process == units::samples (0))
+    if (range.samples_to_process == units::samples (0))
       {
         // Not time to start yet
         return;
@@ -537,8 +547,8 @@ ClipPlaybackDataProvider::process_audio_events (
 
     // Process audio chunks with looping using the common template method
     process_chunks_with_looping (
-      internal_buffer_start_offset, samples_to_process, clip_loop_end_samples,
-      time_nfo.buffer_offset_,
+      range.internal_buffer_start_offset, range.samples_to_process,
+      clip_loop_end_samples, range.output_buffer_timestamp_offset,
       [&] (
         units::sample_t current_internal_buffer_offset,
         units::sample_t samples_to_process_in_chunk,

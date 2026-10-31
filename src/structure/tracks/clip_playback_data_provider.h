@@ -122,9 +122,32 @@ private:
     units::sample_t                     clip_loop_end_samples);
 
   /**
-   * @brief Common logic for handling quantization and playback start.
+   * @brief Portion of the current block to render from the clip.
    */
-  std::pair<units::sample_t, units::sample_t> handle_quantization_and_start (
+  struct BlockPlaybackRange
+  {
+    /** Offset within the clip to start reading from. */
+    units::sample_t internal_buffer_start_offset;
+
+    /** Number of samples to render (0 if playback does not start yet). */
+    units::sample_t samples_to_process;
+
+    /**
+     * Offset in the output buffer at which rendering starts.
+     *
+     * Equals the block's buffer offset, plus the distance to the
+     * quantization point when playback starts within this block.
+     */
+    units::sample_t output_buffer_timestamp_offset;
+  };
+
+  /**
+   * @brief Common logic for handling quantization and playback start.
+   *
+   * Playback starts only if the quantization point lies within the block
+   * (`[transport_position_, transport_position_ + nframes_)`).
+   */
+  BlockPlaybackRange handle_quantization_and_start (
     const dsp::graph::ProcessBlockInfo   &time_nfo,
     units::sample_t                       clip_loop_end_samples,
     structure::tracks::ClipQuantizeOption quantize_opt);
