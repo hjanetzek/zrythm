@@ -110,6 +110,35 @@ Rough order: 3 + 2 in the materializer (a destination abstraction), then
 4 and 6 in the service with the new slot states, then UI (1), then 5, 7
 and 8.
 
+### Implemented (2026-10-31)
+
+- **Backend (2, 3, 5, 8):** `RecordingMaterializer::begin_clip_slot_recording`
+  / `end_clip_slot_recording` record a track into a slot within a timeline
+  window. Packets are trimmed to the window regardless of the transport's
+  record button. The track's timeline recording is suspended while it
+  runs. A gap (transport loop, seek), the window end, or the session end
+  finishes the recording, completing held notes. Clip slot recordings stay
+  out of the "Record" macro; attaching the clip is a single undoable
+  `AddClipToClipSlotCommand`.
+- **Finishing (6, partly):** the clip moves to position 0, its length is
+  the recorded window, and its loop covers it. There's **no playback
+  handoff yet**: the slot is left stopped. A seamless handoff needs the
+  playback cache of a clip that's still being written, so it's a later
+  step.
+- **Controller (4, 7):** `controllers::ClipSlotRecorder`, exposed as
+  `ProjectSession.clipSlotRecorder`:
+  - starts and stops at the clip launcher's launch quantization
+    (`next_quantization_tick`, tested incl. 7/8);
+  - starts the transport if it is stopped;
+  - stops the track's playing clip at the same quantization point;
+  - moves the slot through RecordQueued → Recording → Stopped.
+
+  **No fixed-length recordings yet** (1/2/4 bars).
+- **UI (1):** empty slots of armed tracks show a red "●" button; it blinks
+  while queued and turns into "■" (stop) while recording.
+- **Tests (9):** 9 materializer unit tests and 4 quantization tests. **No
+  end-to-end integration test yet.**
+
 ---
 
 ## Clip Launcher: State of the Implementation (2026-10-31)
