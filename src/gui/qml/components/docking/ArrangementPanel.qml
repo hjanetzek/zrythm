@@ -147,6 +147,7 @@ SplitView {
       timeline: root.session.uiState.timeline
       trackCollection: root.project.tracklist.collection
       tracklist: root.project.tracklist
+      undoStack: root.session.undoStack
     }
   }
 

@@ -21,10 +21,14 @@ ClipLauncher::ClipLauncher (
 Scene *
 ClipLauncher::addScene ()
 {
-  scene_list_->insert_scene (
-    utils::make_qobject_unique<Scene> (registry_, track_collection_),
-    scene_list_->rowCount ());
+  scene_list_->insert_scene (create_scene (), scene_list_->rowCount ());
   return scene_list_->scenes ().back ().get ();
+}
+
+utils::QObjectUniquePtr<Scene>
+ClipLauncher::create_scene () const
+{
+  return utils::make_qobject_unique<Scene> (registry_, track_collection_);
 }
 
 // ============================================================================

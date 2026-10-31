@@ -53,6 +53,7 @@ target_sources(zrythm_commands_lib
       resize_arranger_objects_command.h
       route_channel_send_command.h
       route_track_command.h
+      scene_commands.h
       set_audio_clip_transforms_command.h
       set_clip_loop_points_command.h
       set_folder_parent_command.h

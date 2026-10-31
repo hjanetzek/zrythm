@@ -29,6 +29,12 @@ public:
   // Scene management
   Q_INVOKABLE Scene * addScene ();
 
+  /**
+   * @brief Creates an empty scene (with a slot for each track) that is not
+   * part of the scene list yet.
+   */
+  utils::QObjectUniquePtr<Scene> create_scene () const;
+
 private:
   static constexpr auto kScenesKey = "scenes"sv;
   friend void to_json (nlohmann::json &j, const ClipLauncher &launcher);

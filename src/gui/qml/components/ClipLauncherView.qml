@@ -31,6 +31,125 @@ Item {
   required property var timeline
   required property TrackCollection trackCollection
   required property Tracklist tracklist
+  required property UndoStack undoStack
+
+  ClipLauncherOperator {
+    id: sceneOperator
+
+    clipLauncher: root.clipLauncher
+    clipPlaybackService: root.clipPlaybackService
+    undoStack: root.undoStack
+  }
+
+  // Scene the scene menu, rename dialog and color picker act on
+  property Scene editedScene: null
+
+  Menu {
+    id: sceneMenu
+
+    MenuItem {
+      text: qsTr("Rename Scene…")
+
+      onTriggered: {
+        sceneNameField.text = root.editedScene.name;
+        sceneRenameDialog.open();
+      }
+    }
+
+    MenuItem {
+      text: qsTr("Scene Color…")
+
+      onTriggered: sceneColorPicker.open()
+    }
+
+    MenuSeparator {
+    }
+
+    MenuItem {
+      text: qsTr("Insert Scene Before")
+
+      onTriggered: sceneOperator.insertScene(root.sceneIndex(root.editedScene))
+    }
+
+    MenuItem {
+      enabled: root.sceneIndex(root.editedScene) > 0
+      text: qsTr("Move Scene Left")
+
+      onTriggered: sceneOperator.moveScene(root.editedScene, root.sceneIndex(root.editedScene) - 1)
+    }
+
+    MenuItem {
+      enabled: root.sceneIndex(root.editedScene) < root.clipLauncher.scenes.rowCount() - 1
+      text: qsTr("Move Scene Right")
+
+      onTriggered: sceneOperator.moveScene(root.editedScene, root.sceneIndex(root.editedScene) + 1)
+    }
+
+    MenuSeparator {
+    }
+
+    MenuItem {
+      text: qsTr("Stop Scene")
+
+      onTriggered: root.clipPlaybackService.stopScene(root.editedScene)
+    }
+
+    MenuItem {
+      text: qsTr("Delete Scene")
+
+      onTriggered: sceneOperator.removeScene(root.editedScene)
+    }
+  }
+
+  Dialog {
+    id: sceneRenameDialog
+
+    anchors.centerIn: Overlay.overlay
+    modal: true
+    parent: Overlay.overlay
+    standardButtons: Dialog.Ok | Dialog.Cancel
+    title: qsTr("Rename Scene")
+
+    onAccepted: sceneOperator.renameScene(root.editedScene, sceneNameField.text)
+    onOpened: sceneNameField.selectAll()
+
+    TextField {
+      id: sceneNameField
+
+      focus: true
+      implicitWidth: 240
+
+      onAccepted: sceneRenameDialog.accept()
+    }
+  }
+
+  ColorPickerPopover {
+    id: sceneColorPicker
+
+    currentColor: root.editedScene !== null && root.editedScene.color.valid ? root.editedScene.color : "transparent"
+    defaultColor: root.palette.button
+    parent: Overlay.overlay
+    useColor: root.editedScene !== null && root.editedScene.color.valid
+    x: (parent.width - width) / 2
+    y: (parent.height - height) / 2
+
+    onColorSelected: picked => sceneOperator.setSceneColor(root.editedScene, picked)
+    onUnsetRequested: () => sceneOperator.unsetSceneColor(root.editedScene)
+  }
+
+  // Index of a scene in the clip launcher, or -1
+  function sceneIndex(scene: Scene): int {
+    return root.clipLauncher.scenes.indexOfScene(scene);
+  }
+
+  // Adds a scene and lets @p fill put something into it, as one undo step
+  function addSceneWith(macroText: string, fill: var) {
+    root.undoStack.beginMacro(macroText);
+    const scene = sceneOperator.addScene();
+    if (scene !== null)
+      fill(scene);
+    root.undoStack.endMacro();
+  }
 
   SortFilterProxyModel {
     id: pinnedTrackModel
@@ -102,7 +221,7 @@ Item {
         Repeater {
           model: root.clipLauncher.scenes
 
-          delegate: RowLayout {
+          delegate: Item {
             id: sceneHeaderRow
 
             required property int index
@@ -112,35 +231,67 @@ Item {
             Layout.preferredHeight: root.rulerHeight
             Layout.preferredWidth: root.sceneWidth
 
-            ToolButton {
-              id: playSceneButton
+            // Scene color strip
+            Rectangle {
+              anchors.bottom: parent.bottom
+              anchors.left: parent.left
+              anchors.right: parent.right
+              color: sceneHeaderRow.scene.color
+              height: 3
+              visible: sceneHeaderRow.scene.color.valid
+            }
 
-              icon.source: root.playIconSource
+            RowLayout {
+              anchors.fill: parent
 
-              onClicked: root.clipPlaybackService.launchScene(sceneHeaderRow.scene)
+              ToolButton {
+                id: playSceneButton
 
-              ToolTip {
-                text: qsTr("Play Scene")
+                icon.source: root.playIconSource
+
+                onClicked: root.clipPlaybackService.launchScene(sceneHeaderRow.scene)
+
+                ToolTip {
+                  text: qsTr("Play Scene")
+                }
+              }
+
+              Label {
+                id: sceneHeaderLabel
+
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: sceneHeaderRow.scene.name !== "" ? sceneHeaderRow.scene.name : qsTr("Scene %1").arg(sceneHeaderRow.index + 1)
               }
             }
 
-            Label {
-              id: sceneHeaderLabel
+            TapHandler {
+              acceptedButtons: Qt.RightButton
 
-              text: sceneHeaderRow.scene.name !== "" ? sceneHeaderRow.scene.name : qsTr("Scene %1").arg(sceneHeaderRow.index + 1)
+              onTapped: {
+                root.editedScene = sceneHeaderRow.scene;
+                sceneMenu.popup();
+              }
+            }
+
+            TapHandler {
+              onLongPressed: {
+                root.editedScene = sceneHeaderRow.scene;
+                sceneMenu.popup();
+              }
             }
           }
         }
 
-        RowLayout {
+        ToolButton {
           Layout.preferredHeight: root.rulerHeight
           Layout.preferredWidth: root.sceneWidth
+          text: "+"
 
-          Label {
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-            text: "+"
-            verticalAlignment: Text.AlignVCenter
+          onClicked: sceneOperator.addScene()
+
+          ToolTip {
+            text: qsTr("Add Scene")
           }
         }
       }
@@ -273,17 +424,17 @@ Item {
                 const clip = phantomDropArea.draggedClip(drop.source);
                 if (clip !== null) {
                   // A new scene receives the clip
-                  const sceneForClip = root.clipLauncher.addScene();
-                  const slotForClip = sceneForClip.clipSlots.clipSlotForTrack(phantomClipSlot.track);
-                  root.objectCreator.copyClipToClipSlot(clip, phantomClipSlot.track, slotForClip);
+                  root.addSceneWith(qsTr("Add Scene With Clip"), scene => {
+                    root.objectCreator.copyClipToClipSlot(clip, phantomClipSlot.track, scene.clipSlots.clipSlotForTrack(phantomClipSlot.track));
+                  });
                   drop.accept(Qt.CopyAction);
                   return;
                 }
                 let uniqueFilePaths = DragUtils.getUniqueFilePaths(drop);
                 if (uniqueFilePaths.length > 0) {
-                  const newScene = root.clipLauncher.addScene();
-                  const newClipSlot = newScene.clipSlots.clipSlotForTrack(phantomClipSlot.track);
-                  root.fileImporter.importFileToClipSlot(uniqueFilePaths[0], phantomClipSlot.track, newScene, newClipSlot);
+                  root.addSceneWith(qsTr("Add Scene With Clip"), scene => {
+                    root.fileImporter.importFileToClipSlot(uniqueFilePaths[0], phantomClipSlot.track, scene, scene.clipSlots.clipSlotForTrack(phantomClipSlot.track));
+                  });
                 }
               }
               onEntered: drag => {
@@ -296,9 +447,9 @@ Item {
 
             TapHandler {
               onDoubleTapped: {
-                const newScene = root.clipLauncher.addScene();
-                const newClipSlot = newScene.clipSlots.clipSlotForTrack(phantomClipSlot.track);
-                root.objectCreator.addEmptyMidiClipToClip(phantomClipSlot.track, newClipSlot);
+                root.addSceneWith(qsTr("Add Scene With Clip"), scene => {
+                  root.objectCreator.addEmptyMidiClipToClip(phantomClipSlot.track, scene.clipSlots.clipSlotForTrack(phantomClipSlot.track));
+                });
               }
             }
           }
