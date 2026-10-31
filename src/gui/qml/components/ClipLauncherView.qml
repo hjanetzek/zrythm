@@ -249,21 +249,48 @@ Item {
 
             required property Track track
 
-            color: palette.button
+            color: phantomDropArea.containsDrag ? ZrythmTheme.adjustColorForHoverOrVisualFocusOrDown(palette.button, true, false, false) : palette.button
             height: track.fullVisibleHeight
             radius: ZrythmTheme.textFieldRadius
             width: root.sceneWidth
 
             DropArea {
+              id: phantomDropArea
+
+              // Marks this as a drop target for clips dragged out of an
+              // arranger
+              readonly property bool acceptsArrangerClips: true
+
+              // The clip dragged from an arranger, or null for other drags (files)
+              function draggedClip(source: QtObject): ArrangerObject {
+                const clipDragItem = source as ArrangerClipDragItem;
+                return clipDragItem !== null ? clipDragItem.arrangerClip : null;
+              }
+
               anchors.fill: parent
 
               onDropped: drop => {
+                const clip = phantomDropArea.draggedClip(drop.source);
+                if (clip !== null) {
+                  // A new scene receives the clip
+                  const sceneForClip = root.clipLauncher.addScene();
+                  const slotForClip = sceneForClip.clipSlots.clipSlotForTrack(phantomClipSlot.track);
+                  root.objectCreator.copyClipToClipSlot(clip, phantomClipSlot.track, slotForClip);
+                  drop.accept(Qt.CopyAction);
+                  return;
+                }
                 let uniqueFilePaths = DragUtils.getUniqueFilePaths(drop);
                 if (uniqueFilePaths.length > 0) {
                   const newScene = root.clipLauncher.addScene();
                   const newClipSlot = newScene.clipSlots.clipSlotForTrack(phantomClipSlot.track);
                   root.fileImporter.importFileToClipSlot(uniqueFilePaths[0], phantomClipSlot.track, newScene, newClipSlot);
                 }
+              }
+              onEntered: drag => {
+                // Clips that do not fit this track are not accepted
+                const clip = phantomDropArea.draggedClip(drag.source);
+                if (clip !== null && !root.objectCreator.canCopyClipToClipSlot(clip, phantomClipSlot.track))
+                  drag.accepted = false;
               }
             }
 

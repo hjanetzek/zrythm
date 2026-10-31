@@ -70,6 +70,29 @@ public:
     structure::tracks::Track *    track,
     structure::scenes::ClipSlot * clipSlot);
 
+  /**
+   * @brief Whether @p clip can be copied into a clip slot of @p track.
+   *
+   * MIDI clips fit MIDI and instrument tracks, audio clips fit audio tracks;
+   * other clip types are not supported in clip slots.
+   */
+  Q_INVOKABLE static bool canCopyClipToClipSlot (
+    const structure::arrangement::ArrangerObject * clip,
+    const structure::tracks::Track *               track);
+
+  /**
+   * @brief Copies @p clip into @p clipSlot (undoable).
+   *
+   * The copy starts at position 0 and replaces any clip the slot held.
+   *
+   * @return The copy, or nullptr if the clip does not fit the track (see
+   * canCopyClipToClipSlot()).
+   */
+  Q_INVOKABLE structure::arrangement::Clip * copyClipToClipSlot (
+    structure::arrangement::ArrangerObject * clip,
+    structure::tracks::Track *               track,
+    structure::scenes::ClipSlot *            clipSlot);
+
   Q_INVOKABLE structure::arrangement::ChordClip *
   addEmptyChordClip (structure::tracks::ChordTrack * track, double startTicks);
 

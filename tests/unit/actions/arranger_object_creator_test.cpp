@@ -312,6 +312,86 @@ TEST_F (ArrangerObjectCreatorTest, AddEmptyMidiClipToClipRefusesNullArguments)
   EXPECT_EQ (undo_stack_->count (), initial_count);
 }
 
+TEST_F (ArrangerObjectCreatorTest, CopyClipToClipSlotCopiesTimelineClip)
+{
+  auto track_ref =
+    track_factory_->create_empty_track<structure::tracks::MidiTrack> ();
+  auto * midi_track = track_ref.get_object_as<structure::tracks::MidiTrack> ();
+  track_collection_->add_track (track_ref);
+
+  // Timeline clip at tick 1920 with one note
+  auto clip_ref =
+    arranger_object_factory->get_builder<structure::arrangement::MidiClip> ()
+      .with_start_ticks (units::ticks (1920))
+      .build_in_registry ();
+  auto * timeline_clip =
+    clip_ref.get_object_as<structure::arrangement::MidiClip> ();
+  auto note_ref =
+    arranger_object_factory->get_builder<structure::arrangement::MidiNote> ()
+      .with_start_ticks (units::ticks (0))
+      .build_in_registry ();
+  timeline_clip->structure::arrangement::ArrangerObjectOwner<
+    structure::arrangement::MidiNote>::add_object (note_ref);
+
+  auto clip_slot_ref =
+    utils::create_object<structure::scenes::ClipSlot> (registry_, registry_);
+  auto * clip_slot = clip_slot_ref.get ();
+
+  const int initial_count = undo_stack_->count ();
+  auto *    copy =
+    creator->copyClipToClipSlot (timeline_clip, midi_track, clip_slot);
+  ASSERT_NE (copy, nullptr);
+  EXPECT_NE (copy, timeline_clip);
+  EXPECT_EQ (clip_slot->clip (), copy);
+  EXPECT_DOUBLE_EQ (copy->position ()->ticks (), 0.0);
+  EXPECT_DOUBLE_EQ (
+    copy->length ()->ticks (), timeline_clip->length ()->ticks ());
+  EXPECT_EQ (
+    qobject_cast<structure::arrangement::MidiClip *> (copy)
+      ->structure::arrangement::ArrangerObjectOwner<
+        structure::arrangement::MidiNote>::get_children_vector ()
+      .size (),
+    1);
+  // The timeline clip is unchanged
+  EXPECT_DOUBLE_EQ (timeline_clip->position ()->ticks (), 1920.0);
+  EXPECT_EQ (undo_stack_->count (), initial_count + 1);
+
+  undo_stack_->undo ();
+  EXPECT_EQ (clip_slot->clip (), nullptr);
+  undo_stack_->redo ();
+  EXPECT_EQ (clip_slot->clip (), copy);
+}
+
+TEST_F (
+  ArrangerObjectCreatorTest,
+  CopyClipToClipSlotRefusesClipThatDoesNotFitTrack)
+{
+  auto audio_track_ref =
+    track_factory_->create_empty_track<structure::tracks::AudioTrack> ();
+  auto * audio_track =
+    audio_track_ref.get_object_as<structure::tracks::AudioTrack> ();
+  track_collection_->add_track (audio_track_ref);
+
+  auto clip_ref =
+    arranger_object_factory->get_builder<structure::arrangement::MidiClip> ()
+      .with_start_ticks (units::ticks (0))
+      .build_in_registry ();
+  auto clip_slot_ref =
+    utils::create_object<structure::scenes::ClipSlot> (registry_, registry_);
+
+  EXPECT_FALSE (
+    ArrangerObjectCreator::canCopyClipToClipSlot (
+      clip_ref.get_object_as<structure::arrangement::MidiClip> (), audio_track));
+  const int initial_count = undo_stack_->count ();
+  EXPECT_EQ (
+    creator->copyClipToClipSlot (
+      clip_ref.get_object_as<structure::arrangement::MidiClip> (), audio_track,
+      clip_slot_ref.get ()),
+    nullptr);
+  EXPECT_EQ (clip_slot_ref.get ()->clip (), nullptr);
+  EXPECT_EQ (undo_stack_->count (), initial_count);
+}
+
 TEST_F (ArrangerObjectCreatorTest, AddMidiControlEvent)
 {
   auto track_ref =

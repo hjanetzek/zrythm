@@ -29,7 +29,7 @@ Control {
       let c = root.clipSlot.clipObject
         ? TrackColors.effectiveColor(root.track, ZrythmTheme.darkMode)
         : palette.button;
-      return ZrythmTheme.adjustColorForHoverOrVisualFocusOrDown(c, root.hovered, root.activeFocus, tapHandler.pressed);
+      return ZrythmTheme.adjustColorForHoverOrVisualFocusOrDown(c, root.hovered || dropArea.containsDrag, root.activeFocus, tapHandler.pressed);
     }
     radius: ZrythmTheme.textFieldRadius
 
@@ -113,11 +113,32 @@ Control {
     DropArea {
       id: dropArea
 
+      // Marks this as a drop target for clips dragged out of an arranger
+      readonly property bool acceptsArrangerClips: true
+
+      // The clip dragged from an arranger, or null for other drags (files)
+      function draggedClip(source: QtObject): ArrangerObject {
+        const clipDragItem = source as ArrangerClipDragItem;
+        return clipDragItem !== null ? clipDragItem.arrangerClip : null;
+      }
+
       anchors.fill: parent
 
       onDropped: drop => {
+        const clip = dropArea.draggedClip(drop.source);
+        if (clip !== null) {
+          root.objectCreator.copyClipToClipSlot(clip, root.track, root.clipSlot);
+          drop.accept(Qt.CopyAction);
+          return;
+        }
         let uniqueFilePaths = DragUtils.getUniqueFilePaths(drop);
         root.filesDropped(uniqueFilePaths);
+      }
+      onEntered: drag => {
+        // Clips that do not fit this track are not accepted
+        const clip = dropArea.draggedClip(drag.source);
+        if (clip !== null && !root.objectCreator.canCopyClipToClipSlot(clip, root.track))
+          drag.accepted = false;
       }
     }
   }

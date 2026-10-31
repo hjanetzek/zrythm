@@ -443,6 +443,67 @@ ArrangerObjectCreator::addEmptyMidiClipToClip (
   return mr_ref.get_object_as<structure::arrangement::MidiClip> ();
 }
 
+bool
+ArrangerObjectCreator::canCopyClipToClipSlot (
+  const structure::arrangement::ArrangerObject * clip,
+  const structure::tracks::Track *               track)
+{
+  if (clip == nullptr || track == nullptr)
+    return false;
+
+  using TrackType = structure::tracks::Track::Type;
+  const auto track_type = track->type ();
+  if (qobject_cast<const structure::arrangement::MidiClip *> (clip) != nullptr)
+    return track_type == TrackType::Midi || track_type == TrackType::Instrument;
+  if (qobject_cast<const structure::arrangement::AudioClip *> (clip) != nullptr)
+    return track_type == TrackType::Audio;
+  return false;
+}
+
+structure::arrangement::Clip *
+ArrangerObjectCreator::copyClipToClipSlot (
+  structure::arrangement::ArrangerObject * clip,
+  structure::tracks::Track *               track,
+  structure::scenes::ClipSlot *            clipSlot)
+{
+  if (clipSlot == nullptr || !canCopyClipToClipSlot (clip, track))
+    {
+      z_warning ("Clip cannot be copied into this clip slot");
+      return nullptr;
+    }
+
+  auto copy_ref = std::visit (
+    [&] (auto &&obj)
+      -> std::optional<structure::arrangement::ArrangerObjectUuidReference> {
+      using ObjectT = utils::base_type<decltype (obj)>;
+      if constexpr (
+        std::is_same_v<ObjectT, structure::arrangement::MidiClip>
+        || std::is_same_v<ObjectT, structure::arrangement::AudioClip>)
+        {
+          return arranger_object_factory_.clone_new_object_identity (*obj);
+        }
+      else
+        {
+          return std::nullopt;
+        }
+    },
+    utils::convert_to_variant_qobj<
+      structure::arrangement::ArrangerObjectPtrVariant> (clip));
+  if (!copy_ref.has_value ())
+    return nullptr;
+
+  // A slot clip starts at the beginning of its own playback
+  auto * copy = copy_ref->get_object_as<structure::arrangement::Clip> ();
+  copy->position ()->setTicks (0.0);
+
+  undo_stack_.push (
+    std::make_unique<commands::AddClipToClipSlotCommand> (
+      structure::scenes::ClipSlotUuidReference (
+        clipSlot->get_uuid (), arranger_object_factory_.registry ()),
+      *copy_ref));
+  return copy;
+}
+
 structure::arrangement::AudioClip *
 ArrangerObjectCreator::add_audio_clip_with_clip (
   structure::tracks::Track         &track,

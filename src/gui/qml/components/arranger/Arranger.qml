@@ -1039,6 +1039,15 @@ Item {
               const obj = root.getObjectAtCurrentIndex();
               root.dragState.dragDeltaPx = calculateSnappedMovementTicks(ArrangerObjectHelper.timelineTicks(obj)) * root.ruler.pxPerTick;
               moveTemporaryObjectsY(dy, previousY);
+
+              // Outside the arranger, a dragged clip can be dropped on
+              // other views (e.g. clip launcher slots)
+              const pointInArranger = arrangerMouseArea.mapToItem(root, currentCoordinates.x, currentCoordinates.y);
+              const outsideArranger = !root.contains(pointInArranger);
+              const isClip = obj !== null && (obj.type === ArrangerObject.MidiClip || obj.type === ArrangerObject.AudioClip);
+              clipDragProxy.x = currentCoordinates.x;
+              clipDragProxy.y = currentCoordinates.y;
+              clipDragProxy.arrangerClip = (outsideArranger && isClip) ? obj : null;
             } else if (action == Arranger.CreatingMoving) {
               const ticksToMove = calculateObjectMovementTicks();
               moveSelectionsX(ticksToMove);
@@ -1137,6 +1146,7 @@ Item {
             root.objectPainting = false;
             root.objectPaintedSlots = null;
             root.creationMacroOpen = false;
+            clipDragProxy.arrangerClip = null;
             action = Arranger.None;
             root.dragState.reset();
             root.wasClickedObjectSelectedOnPress = false;
@@ -1356,6 +1366,23 @@ Item {
               // Secondary-drag erase: handled by the eraser release logic
               // below, no context menu
             }
+
+            // A clip dropped on a clip-accepting view outside the arranger
+            // goes there instead of being moved
+            const clipDropTarget = clipDragProxy.Drag.target;
+            if (clipDragProxy.arrangerClip !== null && clipDropTarget !== null && clipDropTarget.acceptsArrangerClips === true) {
+              clipDragProxy.Drag.drop();
+              clipDragProxy.arrangerClip = null;
+              action = Arranger.None;
+              root.dragState.reset();
+              root.wasClickedObjectSelectedOnPress = false;
+              root.clickedUnifiedIndexOnPress = null;
+              root.updateCursor();
+              CursorManager.unsetCursor();
+              return;
+            }
+            clipDragProxy.arrangerClip = null;
+
             if (root.handleCustomToolRelease()) {
               // Custom tool action handled by a subclass
             } else if (action === Arranger.Auditioning) {
@@ -1435,6 +1462,12 @@ Item {
             root.wasClickedObjectSelectedOnPress = false;
             root.clickedUnifiedIndexOnPress = null;
             root.updateCursor();
+          }
+
+          // Carries a clip dragged out of the arranger to drop targets
+          // marked with acceptsArrangerClips (e.g. clip launcher slots)
+          ArrangerClipDragItem {
+            id: clipDragProxy
           }
 
           StateGroup {
