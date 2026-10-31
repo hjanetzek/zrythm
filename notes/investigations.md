@@ -120,11 +120,14 @@ and 8.
   finishes the recording, completing held notes. Clip slot recordings stay
   out of the "Record" macro; attaching the clip is a single undoable
   `AddClipToClipSlotCommand`.
-- **Finishing (6, partly):** the clip moves to position 0, its length is
-  the recorded window, and its loop covers it. There's **no playback
-  handoff yet**: the slot is left stopped. A seamless handoff needs the
-  playback cache of a clip that's still being written, so it's a later
-  step.
+- **Finishing (6):** the clip moves to position 0, its length is the
+  recorded window, and its loop covers it. **Playback handoff (done
+  2026-11-01):** a recording that ends at its requested end while the
+  transport rolls continues straight into playback through an aligned
+  launch (`ClipPlaybackService::launch_clip_aligned`). It switches
+  immediately but anchors the clip start at the end position, because the
+  clip is only complete ~100 ms later, after the last drain. Recordings
+  ended by a transport stop, loop or disarm don't auto-play.
 - **Controller (4, 7):** `controllers::ClipSlotRecorder`, exposed as
   `ProjectSession.clipSlotRecorder`:
   - starts and stops at the clip launcher's launch quantization
@@ -133,7 +136,9 @@ and 8.
   - stops the track's playing clip at the same quantization point;
   - moves the slot through RecordQueued → Recording → Stopped.
 
-  **No fixed-length recordings yet** (1/2/4 bars).
+  **Fixed lengths (done 2026-11-01):** a "Recording Length" combo box
+  (Free/1/2/4/8 bars) sets `ClipSlotRecorder::fixedLengthBars`. It's kept
+  for the session only, not saved in the project.
 - **UI (1):** empty slots of armed tracks show a red "●" button; it blinks
   while queued and turns into "■" (stop) while recording.
 - **Tests (9):** 9 materializer unit tests and 4 quantization tests. **No
