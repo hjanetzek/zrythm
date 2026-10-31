@@ -341,9 +341,13 @@ Key files:
     empty slot. The debug `console.log` calls are removed.
 18. The quantize menu offers only Immediate, Bar and Beat. There's no
     global or per-clip default launch quantization setting. **Partly
-    fixed:** the menu now also offers the 1/4–1/32 note options. A default
-    quantization setting, and a choice of stop quantization, are still
-    missing.
+    fixed:** the menu now also offers the 1/4–1/32 note options.
+    **Fixed:** `ClipLauncher::launchQuantization` is a project setting
+    (saved as `clipLauncher.launchQuantization`, by enum name; unknown
+    names are refused on load). A combo box in the launcher header changes
+    it, undoably. Slot buttons, scene launch, stop scene, track stop and
+    stop-all use it for both launching and stopping. Per-clip
+    quantization doesn't exist yet.
 19. There's no stop-scene button, though the service has `stopScene`.
     **Fixed:** "Stop Scene" is in the scene header menu.
 20. There's no way to open a slot clip in the editor (piano roll or
@@ -396,8 +400,8 @@ mapping, recording into slots, warping for launcher clips, launch modes
    teardown (10) and resetting playing slots on mode switch (12).~~ Done.
 5. ~~UI: wire the stop and switch buttons (14, 15), use scene names
    (16), remove the debug notes (17), add scene management and undo
-   (16, 22).~~ Done. Still open: a default launch/stop quantization
-   setting (18), opening slot clips in the editor (20), undoable track
+   (16, 22).~~ Done. ~~Default launch/stop quantization (18)~~ done.
+   Still open: opening slot clips in the editor (20) and undoable track
    mode switching (22).
 6. Respect the clip loop points and tempo (5, 6): ~~MIDI~~ done; audio
    still needs a position-independent launcher rendering.
