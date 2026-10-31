@@ -48,6 +48,28 @@ graph LR
   `RecordingCoordinator::recordingSessionEnded`, i.e. when the transport
   stops.
 
+### Workflow for now: drag timeline clips into slots (done 2026-10-31)
+
+Record onto the timeline, then drag the recorded clip from the timeline
+onto a clip slot (or onto the phantom column to create a scene). The
+slot receives a copy that starts at position 0; the timeline clip stays
+where it was.
+
+- The arranger moves clips with its own pointer handling, not Qt
+  drag-and-drop. While a clip move leaves the arranger, an
+  `ArrangerClipDragItem` (an internal drag carrying the clip) follows
+  the pointer.
+- Drop targets mark themselves with `acceptsArrangerClips`. On release
+  the arranger drops only onto such a target, and then cancels its own
+  move. This guard matters because several `DropArea`s (tracklist,
+  plugin slots, tab buttons) have no `keys` and would accept any drag.
+- `ArrangerObjectCreator::copyClipToClipSlot` clones the clip and
+  attaches it with `AddClipToClipSlotCommand` (undoable, replaces the
+  slot's clip). `canCopyClipToClipSlot` limits MIDI clips to
+  MIDI/instrument tracks and audio clips to audio tracks; slots of other
+  tracks reject the drag.
+- Scene creation from the phantom column is still not undoable (22).
+
 ### Gaps for slot recording
 
 1. **No way to start it.** `ClipSlot::ClipState` has no recording states
