@@ -148,7 +148,9 @@ Key files:
     references.
 12. `checkPlaybackState()` is an empty stub, and
     `cancelPendingClipOperations` resets only queued clips, not playing
-    ones.
+    ones. **Partly fixed:** `setTrackToTimelineMode` now stops a playing
+    clip and resets its slot. The `checkPlaybackState()` stub is still
+    there.
 13. `launchClip` defaults to `NextBar` and `stopClip` to `NextBar`, but
     a stop is immediate anyway (see 1), so the UI's "queued" state for a
     stop lasts only one timer tick.
@@ -156,17 +158,23 @@ Key files:
 **UI (`ClipLauncherView.qml` and related QML)**
 
 14. The per-track **stop buttons** (`TrackStopButtonListView`) have no
-    `onClicked`.
+    `onClicked`. **Fixed:** they call the new
+    `ClipPlaybackService::stopTrackClips`.
 15. The header's global **"Switch Playback to Timeline"** button has no
-    `onClicked`.
+    `onClicked`. **Fixed:** it calls the new
+    `ClipPlaybackService::setAllTracksToTimelineMode`.
 16. Scene headers show a hardcoded `"Scene " + (index + 1)` and ignore
     `scene.name` and `scene.color`. There's no UI to rename, delete,
     reorder or color scenes, although the model supports
-    `removeScene`/`moveScene`.
+    `removeScene`/`moveScene`. **Partly fixed:** headers show
+    `scene.name`, falling back to a translatable "Scene N". Color and
+    scene management are still open.
 17. Double-tapping an empty slot creates a MIDI clip with **two
     hardcoded test notes** (pitches 64 and 68) and logs to the console.
     This is debug code, and it bypasses undo
-    (`addEmptyMidiClipToClip` calls `setClip` directly).
+    (`addEmptyMidiClipToClip` calls `setClip` directly). **Fixed:** the
+    clip is now created empty, through the undo stack, and only in an
+    empty slot. The debug `console.log` calls are removed.
 18. The quantize menu offers only Immediate, Bar and Beat. There's no
     global or per-clip default launch quantization setting.
 19. There's no stop-scene button, though the service has `stopScene`.
@@ -174,7 +182,8 @@ Key files:
     audio editor) from the launcher; this needs checking.
 21. QML style issues: `MouseArea` is used for right-click (rule: pointer
     handlers), and the header labels are not translatable (`"Scene "`,
-    `"Stop " + name`).
+    `"Stop " + name`). **Partly fixed:** the labels are translatable now;
+    the `MouseArea` remains.
 
 **Undo / model**
 
@@ -210,9 +219,9 @@ mapping, recording into slots, warping for launcher clips, launch modes
    start path, and add the finer quantize values (3).
 4. Make the service robust: UUID references (11), safe timer teardown
    (10), and reset playing slots on mode switch (12).
-5. UI: wire the stop and switch buttons (14, 15), use scene names (16),
-   remove the debug notes (17), and add scene management and undo
-   (16, 22).
+5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
+   (16), remove the debug notes (17)~~ (done); add scene management and
+   undo (16, 22).
 6. Respect the clip loop points and tempo (5, 6).
 
 ---
