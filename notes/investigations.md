@@ -166,6 +166,9 @@ Key files:
 1. **Stop ignores quantization.** `queue_stop_playback()` clears the
    buffers immediately; the code says so in a comment ("In a full
    implementation, this would respect the quantization option").
+   **Fixed:** a quantized stop is queued as a switch to silence and takes
+   effect at the quantization point. A launch issued before then replaces
+   it, and cancelling it keeps the clip playing.
 2. **Quantized start lands at the block start, not on the bar or beat**
    **(verified by reading)**. `handle_quantization_and_start()` computes
    `output_buffer_timestamp_offset` (where the boundary falls inside the
@@ -182,7 +185,10 @@ Key files:
    after it.
 3. **Only Immediate, NextBar and NextBeat are implemented.**
    `NextQuarterBeat`…`NextThirtySecondBeat` fall into `default:` and start
-   immediately.
+   immediately. **Fixed:** decided on note values (1/4 … 1/32 notes, like
+   Ableton and Bitwig) and renamed the options to
+   `NextQuarterNote`…`NextThirtySecondNote`. The grid counts from the
+   start of the bar and is capped at the next bar start.
 4. **Switching clips on a playing track skips quantization and the
    restart (verified by reading).** `playing_` stays `true` when a new
    cache is installed, so the quantization branch is skipped: the new clip
@@ -243,7 +249,8 @@ Key files:
     there.
 13. `launchClip` defaults to `NextBar` and `stopClip` to `NextBar`, but
     a stop is immediate anyway (see 1), so the UI's "queued" state for a
-    stop lasts only one timer tick.
+    stop lasts only one timer tick. **Resolved with 1:** UI stops now wait
+    for the next bar.
 
 **UI (`ClipLauncherView.qml` and related QML)**
 
@@ -266,7 +273,10 @@ Key files:
     clip is now created empty, through the undo stack, and only in an
     empty slot. The debug `console.log` calls are removed.
 18. The quantize menu offers only Immediate, Bar and Beat. There's no
-    global or per-clip default launch quantization setting.
+    global or per-clip default launch quantization setting. **Partly
+    fixed:** the menu now also offers the 1/4–1/32 note options. A default
+    quantization setting, and a choice of stop quantization, are still
+    missing.
 19. There's no stop-scene button, though the service has `stopScene`.
 20. There's no way to open a slot clip in the editor (piano roll or
     audio editor) from the launcher; this needs checking.
@@ -305,14 +315,19 @@ mapping, recording into slots, warping for launcher clips, launch modes
    inside a block.~~ Done.
 2. ~~Fix clip switching on a track (4 and 9): queue the new clip until the
    quantization point, and reset the previous slot's state.~~ Done.
-3. Implement quantized stop (1), sharing the boundary maths with the
-   start path, and add the finer quantize values (3).
+3. ~~Implement quantized stop (1), sharing the boundary maths with the
+   start path, and add the finer quantize values (3).~~ Done.
 4. Make the service robust: UUID references (11). ~~Safe timer teardown
    (10) and resetting playing slots on mode switch (12)~~ are done.
 5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
    (16), remove the debug notes (17)~~ (done); add scene management and
    undo (16, 22).
 6. Respect the clip loop points and tempo (5, 6).
+7. Recording into slots: see
+   [Recording into Clip Launcher Slots](#recording-into-clip-launcher-slots-whats-missing-2026-10-31).
+   Order: the materializer's slot destination and gating, then quantized
+   start/stop and finishing in the service, then the UI, then loops,
+   monitoring and MIDI specifics.
 
 ---
 
