@@ -3,10 +3,9 @@
 
 #pragma once
 
-#include <stdexcept>
-
 #include "undo/undo_stack.h"
 
+#include <QPointer>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 namespace zrythm::actions
@@ -31,13 +30,15 @@ public:
   Q_SIGNAL void currentObjectChanged ();
   Q_SIGNAL void undoStackChanged ();
 
+  /**
+   * @brief The object whose properties are changed.
+   *
+   * May be null (e.g. while a QML binding's source is destroyed), and
+   * becomes null when the object is destroyed.
+   */
   QObject * currentObject () const { return current_object_; }
   void      setCurrentObject (QObject * object)
   {
-    if (object == nullptr)
-      {
-        throw std::invalid_argument ("Object cannot be null");
-      }
     if (current_object_ != object)
       {
         current_object_ = object;
@@ -45,13 +46,14 @@ public:
       }
   }
 
+  /**
+   * @brief The undo stack the changes are pushed to.
+   *
+   * May be null; becomes null when the undo stack is destroyed.
+   */
   undo::UndoStack * undoStack () const { return undo_stack_; }
   void              setUndoStack (undo::UndoStack * undoStack)
   {
-    if (undoStack == nullptr)
-      {
-        throw std::invalid_argument ("UndoStack cannot be null");
-      }
     if (undo_stack_ != undoStack)
       {
         undo_stack_ = undoStack;
@@ -59,18 +61,30 @@ public:
       }
   }
 
+  /**
+   * @brief Sets a property of the current object (undoable).
+   *
+   * Refused with a warning if there is no current object or undo stack.
+   */
   Q_INVOKABLE void setValue (QString propertyName, QVariant value);
 
   /**
    * @brief Set a value that affects the tempo map.
    *
    * The audio engine will be stopped while changes to this property are made.
+   * Refused with a warning if there is no current object or undo stack.
    */
   Q_INVOKABLE void
   setValueAffectingTempoMap (QString propertyName, QVariant value);
 
 private:
-  QObject *         current_object_{};
-  undo::UndoStack * undo_stack_{};
+  /**
+   * @brief Whether both the current object and the undo stack are set;
+   * logs a warning otherwise.
+   */
+  bool can_change_value () const;
+
+  QPointer<QObject>         current_object_;
+  QPointer<undo::UndoStack> undo_stack_;
 };
 }

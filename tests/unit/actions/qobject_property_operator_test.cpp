@@ -51,7 +51,8 @@ TEST_F (QObjectPropertyOperatorTest, InitialState)
 
 TEST_F (QObjectPropertyOperatorTest, SetCurrentObject)
 {
-  EXPECT_THROW (operator_->setCurrentObject (nullptr), std::invalid_argument);
+  operator_->setCurrentObject (nullptr);
+  EXPECT_EQ (operator_->currentObject (), nullptr);
 
   auto new_obj = std::make_unique<MockQObject> ();
   operator_->setCurrentObject (new_obj.get ());
@@ -60,11 +61,41 @@ TEST_F (QObjectPropertyOperatorTest, SetCurrentObject)
 
 TEST_F (QObjectPropertyOperatorTest, SetUndoStack)
 {
-  EXPECT_THROW (operator_->setUndoStack (nullptr), std::invalid_argument);
+  operator_->setUndoStack (nullptr);
+  EXPECT_EQ (operator_->undoStack (), nullptr);
 
   auto new_stack = create_mock_undo_stack ();
   operator_->setUndoStack (new_stack.get ());
   EXPECT_EQ (operator_->undoStack (), new_stack.get ());
+}
+
+TEST_F (QObjectPropertyOperatorTest, DestroyedTargetsBecomeNull)
+{
+  auto new_obj = std::make_unique<MockQObject> ();
+  auto new_stack = create_mock_undo_stack ();
+  operator_->setCurrentObject (new_obj.get ());
+  operator_->setUndoStack (new_stack.get ());
+
+  new_obj.reset ();
+  new_stack.reset ();
+
+  EXPECT_EQ (operator_->currentObject (), nullptr);
+  EXPECT_EQ (operator_->undoStack (), nullptr);
+}
+
+TEST_F (QObjectPropertyOperatorTest, SetValueWithoutTargetIsRefused)
+{
+  operator_->setCurrentObject (nullptr);
+  operator_->setValue (QStringLiteral ("intValue"), 100);
+  operator_->setValueAffectingTempoMap (QStringLiteral ("intValue"), 100);
+  EXPECT_EQ (test_obj_->intValue (), 42);
+  EXPECT_EQ (undo_stack_->count (), 0);
+
+  operator_->setCurrentObject (test_obj_.get ());
+  operator_->setUndoStack (nullptr);
+  operator_->setValue (QStringLiteral ("intValue"), 100);
+  EXPECT_EQ (test_obj_->intValue (), 42);
+  EXPECT_EQ (undo_stack_->count (), 0);
 }
 
 TEST_F (QObjectPropertyOperatorTest, SetValue)
