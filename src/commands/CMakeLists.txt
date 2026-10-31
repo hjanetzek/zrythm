@@ -37,6 +37,7 @@ target_sources(zrythm_commands_lib
       change_timebase_override_command.h
       change_uuid_identifiable_object_property_command.h
       channel_send_commands.h
+      clear_clip_slot_command.h
       chord_pad_commands.h
       command.h
       delete_lane_command.h

@@ -570,6 +570,7 @@ Item {
       id: trackClipSlotForScene
 
       clipEditor: root.clipEditor
+      clipLauncherOperator: sceneOperator
       clipSlotRecorder: root.clipSlotRecorder
       clipPlaybackService: root.clipPlaybackService
       clipSlot: clipSlotsListView.scene.clipSlots.clipSlotForTrack(track)

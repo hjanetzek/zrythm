@@ -11,6 +11,7 @@ Control {
   id: root
 
   required property ClipEditor clipEditor
+  required property ClipLauncherOperator clipLauncherOperator
   required property ClipPlaybackService clipPlaybackService
   required property ClipSlot clipSlot
   required property ClipSlotRecorder clipSlotRecorder
@@ -150,6 +151,25 @@ Control {
             playbackPositionIndicator.x = position * root.width;
           }
         }
+      }
+    }
+
+    TapHandler {
+      acceptedButtons: Qt.RightButton
+
+      onTapped: {
+        if (root.clipSlot.clipObject !== null)
+          slotMenu.popup();
+      }
+    }
+
+    Menu {
+      id: slotMenu
+
+      MenuItem {
+        text: qsTr("Delete Clip")
+
+        onTriggered: root.clipLauncherOperator.deleteClip(root.track, root.clipSlot)
       }
     }
 

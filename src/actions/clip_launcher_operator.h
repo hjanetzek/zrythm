@@ -115,6 +115,14 @@ public:
   setSceneColor (structure::scenes::Scene * scene, const QColor &color);
 
   /**
+   * @brief Removes the clip from @p clipSlot of @p track (undoable),
+   * stopping its playback immediately.
+   */
+  Q_INVOKABLE void deleteClip (
+    structure::tracks::Track *    track,
+    structure::scenes::ClipSlot * clipSlot);
+
+  /**
    * @brief Sets the clip launcher's default launch quantization (undoable).
    */
   Q_INVOKABLE void

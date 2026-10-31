@@ -50,6 +50,11 @@ public:
    */
   utils::QObjectUniquePtr<Scene> create_scene () const;
 
+  /**
+   * @brief Registry holding the clip launcher's clip slots.
+   */
+  utils::IObjectRegistry &registry () const { return registry_; }
+
 private:
   static constexpr auto kScenesKey = "scenes"sv;
   static constexpr auto kLaunchQuantizationKey = "launchQuantization"sv;

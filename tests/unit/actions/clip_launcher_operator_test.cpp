@@ -184,6 +184,30 @@ TEST_F (ClipLauncherOperatorTest, SetLaunchQuantizationUndoRedo)
     structure::tracks::ClipQuantizeOption::NextBeat);
 }
 
+TEST_F (ClipLauncherOperatorTest, DeleteClipUndoRedo)
+{
+  auto * scene = operator_->addScene ();
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto * slot = scene->clipSlots ()->clipSlotForTrack (track);
+  auto   clip_ref = utils::create_object<structure::arrangement::MidiClip> (
+    registry_, tempo_map_wrapper_, registry_);
+  auto * clip = clip_ref.get_object_as<structure::arrangement::MidiClip> ();
+  slot->setClip (clip);
+
+  operator_->deleteClip (track, slot);
+  EXPECT_EQ (slot->clip (), nullptr);
+
+  undo_stack_->undo ();
+  EXPECT_EQ (slot->clip (), clip);
+  undo_stack_->redo ();
+  EXPECT_EQ (slot->clip (), nullptr);
+
+  // Deleting from an empty slot is refused
+  const int count = undo_stack_->count ();
+  operator_->deleteClip (track, slot);
+  EXPECT_EQ (undo_stack_->count (), count);
+}
+
 TEST_F (ClipLauncherOperatorTest, OperationsWithoutTargetAreRefused)
 {
   // Scene that is not part of the clip launcher

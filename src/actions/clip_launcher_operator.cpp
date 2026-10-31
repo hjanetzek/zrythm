@@ -3,6 +3,7 @@
 
 #include "actions/clip_launcher_operator.h"
 #include "commands/change_qobject_property_command.h"
+#include "commands/clear_clip_slot_command.h"
 #include "commands/scene_commands.h"
 #include "utils/logger.h"
 
@@ -103,6 +104,34 @@ ClipLauncherOperator::moveScene (structure::scenes::Scene * scene, int toIndex)
   undo_stack_->push (
     std::make_unique<commands::MoveSceneCommand> (
       *clip_launcher_->scenes (), *index, toIndex));
+}
+
+void
+ClipLauncherOperator::deleteClip (
+  structure::tracks::Track *    track,
+  structure::scenes::ClipSlot * clipSlot)
+{
+  if (!can_operate ())
+    return;
+  if (track == nullptr || clipSlot == nullptr || clipSlot->clip () == nullptr)
+    {
+      z_warning ("Clip deletion refused: no clip in the given slot");
+      return;
+    }
+
+  // A deleted clip no longer plays
+  if (
+    clip_playback_service_ != nullptr
+    && clipSlot->state () != structure::scenes::ClipSlot::ClipState::Stopped)
+    {
+      clip_playback_service_->stopClip (
+        track, clipSlot, structure::tracks::ClipQuantizeOption::Immediate);
+    }
+
+  undo_stack_->push (
+    std::make_unique<commands::ClearClipSlotCommand> (
+      structure::scenes::ClipSlotUuidReference (
+        clipSlot->get_uuid (), clip_launcher_->registry ())));
 }
 
 void
