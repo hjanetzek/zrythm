@@ -212,11 +212,12 @@ Item {
       id: launchQuantizationComboBox
 
       Layout.preferredHeight: root.rulerHeight
-      currentIndex: launchQuantizationComboBox.indexOfValue(root.clipLauncher.launchQuantization)
+      currentIndex: launchQuantizationComboBox.options.findIndex(option => option.value === root.clipLauncher.launchQuantization)
+      model: launchQuantizationComboBox.options
       textRole: "text"
       valueRole: "value"
 
-      model: [
+      readonly property var options: [
         {
           text: qsTr("None"),
           value: ClipSlot.ClipQuantizeOption.Immediate
@@ -258,11 +259,12 @@ Item {
       id: recordingLengthComboBox
 
       Layout.preferredHeight: root.rulerHeight
-      currentIndex: recordingLengthComboBox.indexOfValue(root.clipSlotRecorder.fixedLengthBars)
+      currentIndex: recordingLengthComboBox.options.findIndex(option => option.value === root.clipSlotRecorder.fixedLengthBars)
+      model: recordingLengthComboBox.options
       textRole: "text"
       valueRole: "value"
 
-      model: [
+      readonly property var options: [
         {
           text: qsTr("Free"),
           value: 0

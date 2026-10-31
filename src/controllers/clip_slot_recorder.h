@@ -75,8 +75,8 @@ public:
 
   /**
    * @brief Whether recording into @p clipSlot of @p track can start: the
-   * track is armed for recording, the slot is empty and the track does not
-   * record into another slot.
+   * track can record, the slot is empty and the track does not record into
+   * another slot.
    */
   Q_INVOKABLE bool canRecordIntoClipSlot (
     structure::tracks::Track *    track,
@@ -84,7 +84,7 @@ public:
 
   /**
    * @brief Starts recording into @p clipSlot at the next quantization point,
-   * starting the transport if it is not rolling.
+   * arming the track and starting the transport if needed.
    *
    * Refused with a warning if canRecordIntoClipSlot() is false.
    */

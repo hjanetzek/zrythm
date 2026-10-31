@@ -69,7 +69,7 @@ Control {
       enabled: root.clipObject !== null
       launchQuantization: root.launchQuantization
       track: root.track
-      visible: !recordButton.recording
+      visible: root.clipObject !== null && !recordButton.recording
 
       anchors {
         left: parent.left
@@ -77,17 +77,18 @@ Control {
       }
     }
 
-    // Records into the slot (empty slots of armed tracks) or stops the
-    // recording
+    // Records into an empty slot of a recordable track (arming the track),
+    // or stops the recording; dimmed while the track is not armed
     ToolButton {
       id: recordButton
 
       readonly property bool recording: root.clipSlot.state === ClipSlot.Recording || root.clipSlot.state === ClipSlot.RecordQueued
       readonly property bool trackArmed: root.track.recordingParam !== null && root.track.recordingParam.range.isToggled(root.track.recordingParam.baseValue)
 
-      palette.buttonText: ZrythmTheme.recordColor
+      font.pixelSize: 16
+      palette.buttonText: recordButton.recording || recordButton.trackArmed ? ZrythmTheme.recordColor : Qt.alpha(ZrythmTheme.recordColor, 0.4)
       text: recordButton.recording ? "■" : "●"
-      visible: recordButton.recording || (recordButton.trackArmed && root.clipSlot.clipObject === null)
+      visible: recordButton.recording || (root.track.recordingParam !== null && root.clipSlot.clipObject === null)
 
       onClicked: {
         if (recordButton.recording)

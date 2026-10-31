@@ -125,9 +125,7 @@ ClipSlotRecorder::canRecordIntoClipSlot (
 {
   if (track == nullptr || clipSlot == nullptr)
     return false;
-  const auto * processor = track->get_track_processor ();
-  return processor != nullptr && processor->is_recording_armed ()
-         && clipSlot->clip () == nullptr
+  return track->recordingParam () != nullptr && clipSlot->clip () == nullptr
          && !recordings_.contains (track->get_uuid ())
          && !materializer_.is_recording_into_clip_slot (track->get_uuid ());
 }
@@ -140,9 +138,16 @@ ClipSlotRecorder::recordIntoClipSlot (
   if (!canRecordIntoClipSlot (track, clipSlot))
     {
       z_warning (
-        "Clip slot recording refused: the track must be armed, the slot "
-        "empty, and the track not recording into another slot");
+        "Clip slot recording refused: the track must be able to record, the "
+        "slot empty, and the track not recording into another slot");
       return;
+    }
+
+  // Arming creates the track's recording session right away
+  if (auto * processor = track->get_track_processor ();
+      !processor->is_recording_armed ())
+    {
+      processor->set_recording_armed (true);
     }
 
   const auto start = next_quantization_point ();
