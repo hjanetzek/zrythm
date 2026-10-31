@@ -274,6 +274,12 @@ private:
 
     /** Whether the playing clip was asked to stop. */
     bool stop_requested{};
+
+    /**
+     * Whether the requested stop waits for a quantization point (and can
+     * still be replaced by a launch).
+     */
+    bool stop_quantized{};
   };
 
 private:

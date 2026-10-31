@@ -77,15 +77,21 @@ template <typename TrackT>
 concept PianoRollTrack =
   std::is_same_v<TrackT, InstrumentTrack> || std::is_same_v<TrackT, MidiTrack>;
 
+/**
+ * @brief When a clip launch or stop takes effect.
+ *
+ * The note-value options use a grid of that note length counted from the
+ * start of the current bar; the next bar start is always a grid point.
+ */
 enum class ClipQuantizeOption
 {
   Immediate,
   NextBar,
   NextBeat,
-  NextQuarterBeat,
-  NextEighthBeat,
-  NextSixteenthBeat,
-  NextThirtySecondBeat
+  NextQuarterNote,
+  NextEighthNote,
+  NextSixteenthNote,
+  NextThirtySecondNote
 };
 Q_ENUM_NS (ClipQuantizeOption)
 }

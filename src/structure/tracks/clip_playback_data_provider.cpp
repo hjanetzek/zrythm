@@ -11,6 +11,29 @@ namespace zrythm::structure::tracks
 // Define to enable debug logging for clip launcher event provider
 static constexpr bool CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG = false;
 
+namespace
+{
+/**
+ * @brief Grid size in ticks of a note-value quantization option.
+ */
+constexpr int64_t
+note_grid_ticks (structure::tracks::ClipQuantizeOption quantize_opt)
+{
+  const auto quarter = units::PPQ.in (units::ticks);
+  switch (quantize_opt)
+    {
+    case structure::tracks::ClipQuantizeOption::NextEighthNote:
+      return quarter / 2;
+    case structure::tracks::ClipQuantizeOption::NextSixteenthNote:
+      return quarter / 4;
+    case structure::tracks::ClipQuantizeOption::NextThirtySecondNote:
+      return quarter / 8;
+    default:
+      return quarter;
+    }
+}
+}
+
 ClipPlaybackDataProvider::ClipPlaybackDataProvider (
   const dsp::TempoMap &tempo_map)
     : tempo_map_ (tempo_map), last_seen_timeline_position_ (units::samples (0)),
@@ -112,8 +135,19 @@ ClipPlaybackDataProvider::generate_audio_events (
 
 void
 ClipPlaybackDataProvider::queue_stop_playback (
-  [[maybe_unused]] structure::tracks::ClipQuantizeOption quantize_option)
+  structure::tracks::ClipQuantizeOption quantize_option)
 {
+  // A quantized stop is a queued switch to silence
+  if (quantize_option != structure::tracks::ClipQuantizeOption::Immediate)
+    {
+      queue_cache (
+        PlaybackCache{
+          .content_ = std::monostate{},
+          .quantize_opt_ = quantize_option,
+          .end_position_ = units::ticks (0) });
+      return;
+    }
+
   // With nothing queued, the played slot cannot change while it is cleared
   const auto state = retract_pending_launch ();
   CacheSlot::ScopedAccess<farbot::ThreadType::nonRealtime> slot{
@@ -212,10 +246,11 @@ ClipPlaybackDataProvider::quantization_offset_in_block (
     return units::samples (0);
 
   const auto current_timeline_position = time_nfo.transport_position_;
-  const auto musical_pos_at_start = tempo_map_.tick_to_musical_position (
-    au::round_as<int64_t> (
-      units::ticks,
-      tempo_map_.samples_to_tick (current_timeline_position).asQuantity ()));
+  const auto start_tick = au::round_as<int64_t> (
+    units::ticks,
+    tempo_map_.samples_to_tick (current_timeline_position).asQuantity ());
+  const auto musical_pos_at_start =
+    tempo_map_.tick_to_musical_position (start_tick);
   const auto musical_pos_at_end = tempo_map_.tick_to_musical_position (
     au::round_as<int64_t> (
       units::ticks,
@@ -225,6 +260,7 @@ ClipPlaybackDataProvider::quantization_offset_in_block (
     musical_pos_at_start.sixteenth == 1 && musical_pos_at_start.tick == 0;
 
   std::optional<dsp::TempoMap::MusicalPosition> musical_pos_to_start_at;
+  std::optional<dsp::TimelineTickI>             tick_to_start_at;
   switch (quantize_opt)
     {
     case structure::tracks::ClipQuantizeOption::NextBar:
@@ -262,20 +298,49 @@ ClipPlaybackDataProvider::quantization_offset_in_block (
         }
       break;
 
-    default:
-      // Finer quantization options are not supported yet and start
-      // immediately
+    case structure::tracks::ClipQuantizeOption::NextQuarterNote:
+    case structure::tracks::ClipQuantizeOption::NextEighthNote:
+    case structure::tracks::ClipQuantizeOption::NextSixteenthNote:
+    case structure::tracks::ClipQuantizeOption::NextThirtySecondNote:
+      {
+        // Next note-value grid point counted from the start of the bar, at
+        // the latest the next bar start (for meters that do not divide
+        // evenly)
+        const auto grid = units::ticks (note_grid_ticks (quantize_opt));
+        const auto bar_start = tempo_map_.musical_position_to_tick (
+          { .bar = musical_pos_at_start.bar,
+            .beat = 1,
+            .sixteenth = 1,
+            .tick = 0 });
+        const auto next_bar_start = tempo_map_.musical_position_to_tick (
+          { .bar = musical_pos_at_start.bar + 1,
+            .beat = 1,
+            .sixteenth = 1,
+            .tick = 0 });
+        const auto ticks_into_bar = start_tick - bar_start.asQuantity ();
+        const auto grid_steps =
+          (ticks_into_bar.in (units::ticks) + grid.in (units::ticks) - 1)
+          / grid.in (units::ticks);
+        tick_to_start_at = std::min (
+          dsp::TimelineTickI{ bar_start.asQuantity () + grid * grid_steps },
+          next_bar_start);
+      }
+      break;
+
+    case structure::tracks::ClipQuantizeOption::Immediate:
       return units::samples (0);
     }
 
-  if (!musical_pos_to_start_at.has_value ())
+  if (musical_pos_to_start_at.has_value ())
+    tick_to_start_at =
+      tempo_map_.musical_position_to_tick (*musical_pos_to_start_at);
+  if (!tick_to_start_at.has_value ())
     return std::nullopt;
 
   // The quantization point can round to slightly before the block start when
   // the block starts exactly on it
   const auto quantized_timeline_position = max (
-    tempo_map_.tick_to_samples_rounded (
-      tempo_map_.musical_position_to_tick (*musical_pos_to_start_at)),
+    tempo_map_.tick_to_samples_rounded (dsp::TimelineTick{ *tick_to_start_at }),
     current_timeline_position);
   const auto offset = quantized_timeline_position - current_timeline_position;
 
@@ -351,16 +416,21 @@ ClipPlaybackDataProvider::process_block (
   const auto state = slot_state_.load (std::memory_order_acquire);
   const auto pending = pending_slot (state);
 
-  // Where within the block the queued clip takes over, if it does
+  // Whether the queued slot holds silence (a queued stop)
+  bool pending_is_stop = false;
+
+  // Where within the block the queued clip or stop takes over, if it does
   const auto switch_offset = [&] () -> std::optional<units::sample_t> {
     if (pending == kNoSlot)
       return std::nullopt;
     CacheSlot::ScopedAccess<farbot::ThreadType::realtime> pending_cache{
       slots_.at (pending)
     };
-    if (
-      !pending_cache->has_value ()
-      || !std::holds_alternative<ContentT> ((*pending_cache)->content_))
+    if (!pending_cache->has_value ())
+      return std::nullopt;
+    const auto &content = (*pending_cache)->content_;
+    pending_is_stop = std::holds_alternative<std::monostate> (content);
+    if (!pending_is_stop && !std::holds_alternative<ContentT> (content))
       return std::nullopt;
     return quantization_offset_in_block (
       time_nfo, (*pending_cache)->quantize_opt_);
@@ -383,14 +453,18 @@ ClipPlaybackDataProvider::process_block (
           if (playing_.load ())
             on_playback_end (time_nfo.buffer_offset_ + *switch_offset);
 
-          playing_.store (true);
-          clip_launch_timeline_position_ =
-            time_nfo.transport_position_ + *switch_offset;
-          internal_clip_buffer_position_.store (units::samples (0));
+          // A queued stop leaves the rest of the block silent
+          playing_.store (!pending_is_stop);
+          if (!pending_is_stop)
+            {
+              clip_launch_timeline_position_ =
+                time_nfo.transport_position_ + *switch_offset;
+              internal_clip_buffer_position_.store (units::samples (0));
 
-          render_slot<ContentT> (
-            pending, time_nfo, *switch_offset, block_length - *switch_offset,
-            render_chunk, on_playback_end);
+              render_slot<ContentT> (
+                pending, time_nfo, *switch_offset,
+                block_length - *switch_offset, render_chunk, on_playback_end);
+            }
         }
       else
         {

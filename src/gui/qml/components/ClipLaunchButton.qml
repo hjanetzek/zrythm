@@ -107,5 +107,29 @@ ToolButton {
 
       onClicked: root.clipPlaybackService.launchClip(root.track, root.clipSlot, ClipSlot.ClipQuantizeOption.NextBeat)
     }
+
+    MenuItem {
+      text: qsTr("Launch on Next 1/4 Note")
+
+      onClicked: root.clipPlaybackService.launchClip(root.track, root.clipSlot, ClipSlot.ClipQuantizeOption.NextQuarterNote)
+    }
+
+    MenuItem {
+      text: qsTr("Launch on Next 1/8 Note")
+
+      onClicked: root.clipPlaybackService.launchClip(root.track, root.clipSlot, ClipSlot.ClipQuantizeOption.NextEighthNote)
+    }
+
+    MenuItem {
+      text: qsTr("Launch on Next 1/16 Note")
+
+      onClicked: root.clipPlaybackService.launchClip(root.track, root.clipSlot, ClipSlot.ClipQuantizeOption.NextSixteenthNote)
+    }
+
+    MenuItem {
+      text: qsTr("Launch on Next 1/32 Note")
+
+      onClicked: root.clipPlaybackService.launchClip(root.track, root.clipSlot, ClipSlot.ClipQuantizeOption.NextThirtySecondNote)
+    }
   }
 }

@@ -111,27 +111,33 @@ stateDiagram-v2
     [*] --> Stopped
     Stopped --> PlayQueued: User launches clip
     PlayQueued --> Playing: Audio engine confirms
+    PlayQueued --> Stopped: User stops clip before it starts
     Playing --> StopQueued: User stops clip
+    StopQueued --> Playing: User launches another clip before the stop
     StopQueued --> Stopped: Audio engine confirms
     PlayQueued --> Stopped: Track mode switched
 ```
 
 ### Quantization System
 
-Clips can be launched with various quantization options to ensure musical timing:
+Launches and stops take effect at a quantization point, so they stay in musical time. The note-value options use a grid of that note length counted from the start of the current bar; the next bar start is always a grid point, so meters that a note value does not divide evenly still line up with bars.
 
 ```mermaid
 graph LR
-    Current[Current Position] --> NextBar[Next Bar]
+    Current[Current Position] --> Immediate[Immediate]
+    Current --> NextBar[Next Bar]
     Current --> NextBeat[Next Beat]
-    Current --> NextQuarter[Next Quarter]
-    Current --> Immediate[Immediate]
+    Current --> NextNote["Next 1/4, 1/8, 1/16 or 1/32 note"]
 
-    NextBar --> Launch[Launch Clip]
-    NextBeat --> Launch
-    NextQuarter --> Launch
-    Immediate --> Launch
+    Immediate --> Point[Quantization Point]
+    NextBar --> Point
+    NextBeat --> Point
+    NextNote --> Point
+    Point --> Launch[Launch Clip]
+    Point --> Stop[Stop Clip]
 ```
+
+A quantized stop is queued like a launch of silence: the playing clip continues until the quantization point, and a launch issued before then replaces the stop.
 
 ## Event Processing Architecture
 

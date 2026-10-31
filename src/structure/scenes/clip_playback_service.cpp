@@ -324,8 +324,19 @@ ClipPlaybackService::scheduleClipLaunch (
       updateClipSlotState (
         track_state.queued_slot, ClipSlot::ClipState::Stopped);
     }
+  // The launch replaces a quantized stop that has not happened yet, so the
+  // playing clip continues until the launched one takes over
+  if (
+    track_state.stop_requested && track_state.stop_quantized
+    && track_state.playing_slot != nullptr
+    && track_state.playing_slot != clipSlot)
+    {
+      updateClipSlotState (
+        track_state.playing_slot, ClipSlot::ClipState::Playing);
+    }
   track_state.queued_slot = clipSlot;
   track_state.stop_requested = false;
+  track_state.stop_quantized = false;
 
   // Update clip slot state to queued
   updateClipSlotState (clipSlot, ClipSlot::ClipState::PlayQueued);
@@ -391,6 +402,8 @@ ClipPlaybackService::scheduleClipStop (
   if (track_state.playing_slot == nullptr)
     track_state.playing_slot = clipSlot;
   track_state.stop_requested = true;
+  track_state.stop_quantized =
+    quantize != structure::tracks::ClipQuantizeOption::Immediate;
   auto * stopping_slot = track_state.playing_slot;
 
   // Update clip slot state to queued
@@ -475,6 +488,7 @@ ClipPlaybackService::checkPlaybackState ()
           track_state.playing_slot, ClipSlot::ClipState::Stopped);
         track_state.playing_slot = nullptr;
         track_state.stop_requested = false;
+        track_state.stop_quantized = false;
       }
 
     // Keep tracks that still play or wait for a change
@@ -521,13 +535,25 @@ ClipPlaybackService::cancelPendingClipOperations (tracks::Track * track)
       track_state.queued_slot = nullptr;
     }
 
-  // A requested stop is already in effect
   if (track_state.stop_requested)
     {
-      updateClipSlotState (
-        track_state.playing_slot, ClipSlot::ClipState::Stopped);
-      track_state.playing_slot = nullptr;
+      if (track_state.stop_quantized)
+        {
+          // Discard the queued stop: the clip keeps playing
+          if (auto * processor = track->get_track_processor ())
+            processor->clip_playback_data_provider ().cancel_pending_launch ();
+          updateClipSlotState (
+            track_state.playing_slot, ClipSlot::ClipState::Playing);
+        }
+      else
+        {
+          // An immediate stop is already in effect
+          updateClipSlotState (
+            track_state.playing_slot, ClipSlot::ClipState::Stopped);
+          track_state.playing_slot = nullptr;
+        }
       track_state.stop_requested = false;
+      track_state.stop_quantized = false;
     }
 
   if (track_state.playing_slot == nullptr)

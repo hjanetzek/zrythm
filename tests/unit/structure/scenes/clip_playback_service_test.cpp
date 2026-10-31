@@ -294,6 +294,83 @@ TEST_F (ClipPlaybackServiceTest, LaunchingClipKeepsPlayingClipUntilSwitch)
     playback_service_->getPlayingClips (), QList<ClipSlot *>{ slot_b.get () });
 }
 
+TEST_F (
+  ClipPlaybackServiceTest,
+  QuantizedStopKeepsClipPlayingUntilQuantizationPoint)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+  const auto &provider =
+    track->get_track_processor ()->clip_playback_data_provider ();
+
+  playback_service_->launchClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
+
+  playback_service_->stopClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::StopQueued);
+
+  // Before the bar boundary the clip still plays
+  process_block (256);
+  EXPECT_TRUE (provider.playing ());
+
+  process_block (bar_start_samples (2) - 100);
+  EXPECT_FALSE (provider.playing ());
+  EXPECT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Stopped));
+}
+
+TEST_F (ClipPlaybackServiceTest, LaunchReplacesQuantizedStop)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   slot_a = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_b = utils::make_qobject_unique<ClipSlot> (*registry_);
+  slot_a->setClip (create_midi_clip ());
+  slot_b->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot_a.get (), ClipSlot::ClipState::Playing));
+
+  playback_service_->stopClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::StopQueued);
+
+  // Launching B replaces the queued stop; A plays until B takes over
+  playback_service_->launchClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Playing);
+  EXPECT_EQ (slot_b->state (), ClipSlot::ClipState::PlayQueued);
+
+  process_block (bar_start_samples (2) - 100);
+  ASSERT_TRUE (wait_for_state (slot_b.get (), ClipSlot::ClipState::Playing));
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Stopped);
+}
+
+TEST_F (ClipPlaybackServiceTest, CancellingQuantizedStopKeepsClipPlaying)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
+
+  playback_service_->stopClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  playback_service_->cancelPendingClipOperations (track);
+
+  EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::Playing);
+  process_block (bar_start_samples (2) - 100);
+  EXPECT_TRUE (
+    track->get_track_processor ()->clip_playback_data_provider ().playing ());
+}
+
 TEST_F (ClipPlaybackServiceTest, LaunchingClipDiscardsEarlierQueuedClip)
 {
   auto * track = track_collection_->get_track_ref_at_index (0).get ();

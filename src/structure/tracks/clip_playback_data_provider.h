@@ -31,8 +31,9 @@ class ClipPlaybackDataProvider final
    */
   struct PlaybackCache
   {
-    std::variant<MidiContent, AudioContent> content_;
-    structure::tracks::ClipQuantizeOption   quantize_opt_;
+    /** Clip contents, or std::monostate for silence (a queued stop). */
+    std::variant<std::monostate, MidiContent, AudioContent> content_;
+    structure::tracks::ClipQuantizeOption                   quantize_opt_;
 
     /**
      * @brief End position to loop at.
@@ -69,13 +70,13 @@ public:
     structure::tracks::ClipQuantizeOption quantize_option);
 
   /**
-   * @brief Stops playback and discards a queued clip.
+   * @brief Stops playback at the quantization point and discards a queued
+   * clip.
    *
-   * Playback stops on the next processing cycle. Must be called from the UI
+   * With Immediate quantization, playback stops on the next processing
+   * cycle. Otherwise the playing clip continues until the quantization point;
+   * a later launch replaces the queued stop. Must be called from the UI
    * thread.
-   *
-   * @param quantize_option Currently unused: playback always stops on the
-   * next processing cycle.
    */
   void
   queue_stop_playback (structure::tracks::ClipQuantizeOption quantize_option);
@@ -89,7 +90,7 @@ public:
   void cancel_pending_launch ();
 
   /**
-   * @brief Whether a clip is queued and has not started playing yet.
+   * @brief Whether a clip or a stop is queued and has not taken effect yet.
    */
   bool launch_pending () const
   {

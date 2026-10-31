@@ -373,10 +373,10 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizeOptions)
     structure::tracks::ClipQuantizeOption::Immediate,
     structure::tracks::ClipQuantizeOption::NextBar,
     structure::tracks::ClipQuantizeOption::NextBeat,
-    structure::tracks::ClipQuantizeOption::NextQuarterBeat,
-    structure::tracks::ClipQuantizeOption::NextEighthBeat,
-    structure::tracks::ClipQuantizeOption::NextSixteenthBeat,
-    structure::tracks::ClipQuantizeOption::NextThirtySecondBeat
+    structure::tracks::ClipQuantizeOption::NextQuarterNote,
+    structure::tracks::ClipQuantizeOption::NextEighthNote,
+    structure::tracks::ClipQuantizeOption::NextSixteenthNote,
+    structure::tracks::ClipQuantizeOption::NextThirtySecondNote
   };
 
   for (const auto &quantize_option : quantize_options)
@@ -397,6 +397,70 @@ TEST_F (ClipPlaybackDataProviderTest, QuantizeOptions)
           EXPECT_GT (output_buffer.size (), 0);
         }
     }
+}
+
+TEST_F (ClipPlaybackDataProviderTest, NoteValueQuantizationStartsOnNextGridPoint)
+{
+  const std::array<std::pair<structure::tracks::ClipQuantizeOption, double>, 4>
+    options_and_grid_ticks = {
+      {
+       { structure::tracks::ClipQuantizeOption::NextQuarterNote, 960.0 },
+       { structure::tracks::ClipQuantizeOption::NextEighthNote, 480.0 },
+       { structure::tracks::ClipQuantizeOption::NextSixteenthNote, 240.0 },
+       { structure::tracks::ClipQuantizeOption::NextThirtySecondNote, 120.0 },
+       }
+  };
+
+  for (const auto &[quantize_option, grid_ticks] : options_and_grid_ticks)
+    {
+      ClipPlaybackDataProvider provider (*tempo_map_);
+      provider.generate_midi_events (*create_simple_region (), quantize_option);
+
+      // Third grid point in the second bar
+      const auto grid_point = static_cast<uint64_t> (
+        tempo_map_
+          ->tick_to_samples_rounded (
+            dsp::TimelineTick{ units::ticks (3840.0 + (3.0 * grid_ticks)) })
+          .in (units::sample));
+
+      // The block just before the grid point stays silent
+      auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+      provider.process_midi_events (
+        create_time_info (grid_point - 132, 0, 32), output_buffer);
+      EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ())
+        << "grid " << grid_ticks;
+
+      // The block containing it starts the clip on the grid point
+      output_buffer.clear ();
+      provider.process_midi_events (
+        create_time_info (grid_point - 100, 0, 256), output_buffer);
+      const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+      ASSERT_EQ (pitch_60_events.size (), 1) << "grid " << grid_ticks;
+      EXPECT_EQ (pitch_60_events[0], units::samples (100))
+        << "grid " << grid_ticks;
+    }
+}
+
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  NoteValueQuantizationStartsAtBlockStartOnGridPoint)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (),
+    structure::tracks::ClipQuantizeOption::NextSixteenthNote);
+
+  // Block starting exactly on a sixteenth (tick 240)
+  const auto grid_point = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (240.0) })
+      .in (units::sample));
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (
+    create_time_info (grid_point, 0, 256), output_buffer);
+
+  const auto pitch_60_events = find_event_timestamps (output_buffer, 60);
+  ASSERT_EQ (pitch_60_events.size (), 1);
+  EXPECT_EQ (pitch_60_events[0], units::samples (0));
 }
 
 TEST_F (ClipPlaybackDataProviderTest, MultipleNotesInRegion)
@@ -972,6 +1036,115 @@ TEST_F (ClipPlaybackDataProviderTest, CancelPendingLaunchKeepsPlayingClip)
   EXPECT_TRUE (provider_->playing ());
 }
 
+TEST_F (ClipPlaybackDataProviderTest, QuantizedStopWaitsForQuantizationPoint)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+
+  provider_->queue_stop_playback (
+    structure::tracks::ClipQuantizeOption::NextBeat);
+  EXPECT_TRUE (provider_->launch_pending ());
+
+  // The clip keeps playing until the beat boundary
+  output_buffer.clear ();
+  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
+  EXPECT_TRUE (provider_->playing ());
+
+  // Block containing the beat boundary 100 samples after its start
+  const auto beat_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (960.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start - 100, 0, 256), output_buffer);
+
+  const auto notes_off = all_notes_off_timestamps (output_buffer);
+  ASSERT_EQ (notes_off.size (), 16);
+  EXPECT_TRUE (std::ranges::all_of (notes_off, [] (const auto ts) {
+    return ts == units::samples (100);
+  }));
+  EXPECT_FALSE (provider_->playing ());
+  EXPECT_FALSE (provider_->launch_pending ());
+
+  // Nothing plays afterwards
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start + 156, 0, 256), output_buffer);
+  EXPECT_EQ (output_buffer.size (), 0);
+}
+
+TEST_F (ClipPlaybackDataProviderTest, LaunchReplacesQueuedStop)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+
+  provider_->queue_stop_playback (
+    structure::tracks::ClipQuantizeOption::NextBar);
+  provider_->generate_midi_events (
+    *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBar);
+
+  const auto bar_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (3840.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (bar_start - 10, 0, 256), output_buffer);
+
+  const auto pitch_62_events = find_event_timestamps (output_buffer, 62);
+  ASSERT_EQ (pitch_62_events.size (), 1);
+  EXPECT_EQ (pitch_62_events[0], units::samples (10));
+  EXPECT_TRUE (provider_->playing ());
+}
+
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  AudioQuantizedStopSilencesFromQuantizationPoint)
+{
+  // Launch in the block before the beat so the clip's audio is still
+  // playing when the beat comes
+  const auto beat_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (960.0) })
+      .in (units::sample));
+  provider_->generate_audio_events (
+    *create_simple_audio_clip (),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> output_left (256, 0.0f);
+  std::vector<float> output_right (256, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (beat_start - 300, 0, 256), output_left, output_right);
+
+  provider_->queue_stop_playback (
+    structure::tracks::ClipQuantizeOption::NextBeat);
+
+  // Next block: the beat boundary is 44 samples after its start
+  std::ranges::fill (output_left, 0.0f);
+  std::ranges::fill (output_right, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (beat_start - 44, 0, 256), output_left, output_right);
+
+  for (const auto i : std::views::iota (0uz, 44uz))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], 0.5f) << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], -0.5f) << "at sample " << i;
+    }
+  for (const auto i : std::views::iota (44uz, output_left.size ()))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], 0.0f) << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], 0.0f) << "at sample " << i;
+    }
+  EXPECT_FALSE (provider_->playing ());
+}
+
 TEST_F (ClipPlaybackDataProviderTest, StopDiscardsQueuedClip)
 {
   provider_->generate_midi_events (
@@ -1428,10 +1601,10 @@ TEST_F (ClipPlaybackDataProviderTest, AudioQuantizeOptions)
     structure::tracks::ClipQuantizeOption::Immediate,
     structure::tracks::ClipQuantizeOption::NextBar,
     structure::tracks::ClipQuantizeOption::NextBeat,
-    structure::tracks::ClipQuantizeOption::NextQuarterBeat,
-    structure::tracks::ClipQuantizeOption::NextEighthBeat,
-    structure::tracks::ClipQuantizeOption::NextSixteenthBeat,
-    structure::tracks::ClipQuantizeOption::NextThirtySecondBeat
+    structure::tracks::ClipQuantizeOption::NextQuarterNote,
+    structure::tracks::ClipQuantizeOption::NextEighthNote,
+    structure::tracks::ClipQuantizeOption::NextSixteenthNote,
+    structure::tracks::ClipQuantizeOption::NextThirtySecondNote
   };
 
   for (const auto &quantize_option : quantize_options)
