@@ -15,6 +15,7 @@ import Qt.labs.synchronizer
 Item {
   id: root
 
+  required property ClipEditor clipEditor
   required property ClipLauncher clipLauncher
   required property ClipPlaybackService clipPlaybackService
   readonly property EditorSettings editorSettings: timeline
@@ -527,6 +528,7 @@ Item {
     delegate: ClipSlotView {
       id: trackClipSlotForScene
 
+      clipEditor: root.clipEditor
       clipPlaybackService: root.clipPlaybackService
       clipSlot: clipSlotsListView.scene.clipSlots.clipSlotForTrack(track)
       height: track.fullVisibleHeight

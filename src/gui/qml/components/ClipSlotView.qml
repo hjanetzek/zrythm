@@ -10,6 +10,7 @@ import Zrythm
 Control {
   id: root
 
+  required property ClipEditor clipEditor
   required property ClipPlaybackService clipPlaybackService
   required property ClipSlot clipSlot
   // Quantization of the slot's launch/stop button (a ClipQuantizeOption)
@@ -108,8 +109,15 @@ Control {
 
       onDoubleTapped: {
         if (root.clipSlot.clipObject === null) {
-          root.objectCreator.addEmptyMidiClipToClip(root.track, root.clipSlot);
+          const clip = root.objectCreator.addEmptyMidiClipToClip(root.track, root.clipSlot);
+          if (clip !== null)
+            root.clipEditor.setClip(clip, root.track);
         }
+      }
+      // Opens the slot's clip in the clip editor
+      onTapped: {
+        if (root.clipSlot.clipObject !== null)
+          root.clipEditor.setClip(root.clipSlot.clipObject, root.track);
       }
     }
 

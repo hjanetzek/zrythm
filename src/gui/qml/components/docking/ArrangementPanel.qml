@@ -139,6 +139,7 @@ SplitView {
     visible: active
 
     sourceComponent: ClipLauncherView {
+      clipEditor: root.session.uiState.clipEditor
       clipLauncher: root.project.clipLauncher
       clipPlaybackService: root.project.clipPlaybackService
       fileImporter: root.session.fileImporter
