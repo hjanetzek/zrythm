@@ -106,6 +106,39 @@ protected:
     return scenes_.back ().get ();
   }
 
+  // Processes one block of clip playback on every track, as the audio engine
+  // does
+  void process_block (uint64_t position, uint32_t nframes = 256)
+  {
+    for (const auto &track_ref : track_collection_->tracks ())
+      {
+        auto midi_events = dsp::MidiEventBuffer::make_reserved ();
+        track_ref.get ()
+          ->get_track_processor ()
+          ->clip_playback_data_provider ()
+          .process_midi_events (
+            dsp::graph::ProcessBlockInfo::from_position_and_nframes (
+              units::samples (position), units::samples (nframes)),
+            midi_events);
+      }
+  }
+
+  // Waits until the service has set @p clip_slot to @p state
+  static bool wait_for_state (ClipSlot * clip_slot, ClipSlot::ClipState state)
+  {
+    return QTest::qWaitFor ([&] { return clip_slot->state () == state; });
+  }
+
+  // Sample position of the start of the given bar (1-based)
+  uint64_t bar_start_samples (int bar) const
+  {
+    return static_cast<uint64_t> (
+      tempo_map_
+        ->tick_to_samples_rounded (
+          dsp::TimelineTick{ units::ticks (3840.0 * (bar - 1)) })
+        .in (units::sample));
+  }
+
   test_helpers::ScopedQCoreApplication                  qapp_;
   std::unique_ptr<ClipPlaybackService>                  playback_service_;
   std::unique_ptr<tracks::TrackCollection>              track_collection_;
@@ -193,10 +226,12 @@ TEST_F (ClipPlaybackServiceTest, StopClip)
     playback_service_.get (), &ClipPlaybackService::clipStopped);
   QSignalSpy stateSpy (clipSlot.get (), &ClipSlot::stateChanged);
 
-  // Launch the clip first
+  // Launch the clip first and let it start playing
   playback_service_->launchClip (
     track, clipSlot.get (), structure::tracks::ClipQuantizeOption::Immediate);
   EXPECT_EQ (launchedSpy.count (), 1);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
 
   // Stop the clip
   playback_service_->stopClip (
@@ -207,13 +242,109 @@ TEST_F (ClipPlaybackServiceTest, StopClip)
   EXPECT_EQ (stoppedSpy.at (0).at (0).value<tracks::Track *> (), track);
   EXPECT_EQ (stoppedSpy.at (0).at (1).value<ClipSlot *> (), clipSlot.get ());
 
-  // Clip slot should be in StopQueued state initially
+  // Clip slot should be in StopQueued state until playback stops
   EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::StopQueued);
+  process_block (256);
+  EXPECT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Stopped));
+}
 
-  // In a real scenario, the timer would check the audio thread state and
-  // eventually change the clip state to Stopped. Since we can't simulate the
-  // audio thread in tests, we can't test the actual state change, but we can
-  // verify the timer was started and the initial queue state is correct.
+TEST_F (ClipPlaybackServiceTest, StoppingClipThatHasNotStartedDiscardsIt)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  playback_service_->stopClip (
+    track, clipSlot.get (), structure::tracks::ClipQuantizeOption::NextBar);
+
+  EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::Stopped);
+  EXPECT_FALSE (
+    track->get_track_processor ()
+      ->clip_playback_data_provider ()
+      .launch_pending ());
+  EXPECT_TRUE (playback_service_->getPlayingClips ().isEmpty ());
+}
+
+TEST_F (ClipPlaybackServiceTest, LaunchingClipKeepsPlayingClipUntilSwitch)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   slot_a = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_b = utils::make_qobject_unique<ClipSlot> (*registry_);
+  slot_a->setClip (create_midi_clip ());
+  slot_b->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot_a.get (), ClipSlot::ClipState::Playing));
+
+  // B waits for the next bar while A keeps playing
+  playback_service_->launchClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Playing);
+  EXPECT_EQ (slot_b->state (), ClipSlot::ClipState::PlayQueued);
+
+  // Processing the block that contains the bar boundary switches to B
+  process_block (bar_start_samples (2) - 100);
+  ASSERT_TRUE (wait_for_state (slot_b.get (), ClipSlot::ClipState::Playing));
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Stopped);
+  EXPECT_EQ (
+    playback_service_->getPlayingClips (), QList<ClipSlot *>{ slot_b.get () });
+}
+
+TEST_F (ClipPlaybackServiceTest, LaunchingClipDiscardsEarlierQueuedClip)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   slot_a = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_b = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_c = utils::make_qobject_unique<ClipSlot> (*registry_);
+  slot_a->setClip (create_midi_clip ());
+  slot_b->setClip (create_midi_clip ());
+  slot_c->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot_a.get (), ClipSlot::ClipState::Playing));
+
+  playback_service_->launchClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  playback_service_->launchClip (
+    track, slot_c.get (), structure::tracks::ClipQuantizeOption::NextBar);
+
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Playing);
+  EXPECT_EQ (slot_b->state (), ClipSlot::ClipState::Stopped);
+  EXPECT_EQ (slot_c->state (), ClipSlot::ClipState::PlayQueued);
+}
+
+TEST_F (ClipPlaybackServiceTest, StoppingQueuedClipKeepsPlayingClip)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   slot_a = utils::make_qobject_unique<ClipSlot> (*registry_);
+  auto   slot_b = utils::make_qobject_unique<ClipSlot> (*registry_);
+  slot_a->setClip (create_midi_clip ());
+  slot_b->setClip (create_midi_clip ());
+
+  playback_service_->launchClip (
+    track, slot_a.get (), structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot_a.get (), ClipSlot::ClipState::Playing));
+
+  playback_service_->launchClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+  playback_service_->stopClip (
+    track, slot_b.get (), structure::tracks::ClipQuantizeOption::NextBar);
+
+  EXPECT_EQ (slot_a->state (), ClipSlot::ClipState::Playing);
+  EXPECT_EQ (slot_b->state (), ClipSlot::ClipState::Stopped);
+  EXPECT_FALSE (
+    track->get_track_processor ()
+      ->clip_playback_data_provider ()
+      .launch_pending ());
+  EXPECT_TRUE (
+    track->get_track_processor ()->clip_playback_data_provider ().playing ());
 }
 
 TEST_F (ClipPlaybackServiceTest, LaunchScene)
@@ -270,10 +401,17 @@ TEST_F (ClipPlaybackServiceTest, StopScene)
 
 TEST_F (ClipPlaybackServiceTest, StopAllClips)
 {
-  // Create a scene with clips and launch it
+  // Create a scene with clips, launch it and let the clips start playing
   auto * scene = create_scene_with_clips ();
   playback_service_->launchScene (
     scene, structure::tracks::ClipQuantizeOption::Immediate);
+  process_block (0);
+  for (const auto &track_ref : track_collection_->tracks ())
+    {
+      ASSERT_TRUE (wait_for_state (
+        scene->clipSlots ()->clipSlotForTrack (track_ref.get ()),
+        ClipSlot::ClipState::Playing));
+    }
 
   // Stop all clips
   playback_service_->stopAllClips (
@@ -379,6 +517,9 @@ TEST_F (ClipPlaybackServiceTest, StopTrackClipsStopsClipOnThatTrackOnly)
   auto * track1 = track_collection_->get_track_ref_at_index (1).get ();
   auto * slot0 = scene->clipSlots ()->clipSlotForTrack (track0);
   auto * slot1 = scene->clipSlots ()->clipSlotForTrack (track1);
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (slot0, ClipSlot::ClipState::Playing));
+  ASSERT_TRUE (wait_for_state (slot1, ClipSlot::ClipState::Playing));
 
   QSignalSpy stoppedSpy (
     playback_service_.get (), &ClipPlaybackService::clipStopped);
@@ -387,7 +528,7 @@ TEST_F (ClipPlaybackServiceTest, StopTrackClipsStopsClipOnThatTrackOnly)
 
   EXPECT_EQ (stoppedSpy.count (), 1);
   EXPECT_EQ (slot0->state (), ClipSlot::ClipState::StopQueued);
-  EXPECT_EQ (slot1->state (), ClipSlot::ClipState::PlayQueued);
+  EXPECT_EQ (slot1->state (), ClipSlot::ClipState::Playing);
 }
 
 TEST_F (ClipPlaybackServiceTest, StopTrackClipsWithoutPlayingClipDoesNothing)
@@ -413,16 +554,8 @@ TEST_F (ClipPlaybackServiceTest, SetTrackToTimelineModeStopsPlayingClip)
   playback_service_->launchClip (
     track, clipSlot.get (), structure::tracks::ClipQuantizeOption::Immediate);
 
-  // Process one block so playback starts, then wait for the service to
-  // observe it
-  auto midi_events = dsp::MidiEventBuffer::make_reserved ();
-  track->get_track_processor ()->clip_playback_data_provider ().process_midi_events (
-    dsp::graph::ProcessBlockInfo::from_position_and_nframes (
-      units::samples (0), units::samples (256)),
-    midi_events);
-  ASSERT_TRUE (QTest::qWaitFor ([&] {
-    return clipSlot->state () == ClipSlot::ClipState::Playing;
-  }));
+  process_block (0);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
   EXPECT_TRUE (track->clipLauncherMode ());
 
   QSignalSpy stoppedSpy (

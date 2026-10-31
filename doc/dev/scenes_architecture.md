@@ -203,7 +203,7 @@ graph TB
 
 ### State Monitoring
 
-The service uses timers to monitor playback state changes without blocking the audio thread:
+The service uses a single timer to monitor playback state changes without blocking the audio thread. It runs while any track has a queued clip or a requested stop:
 
 ```mermaid
 sequenceDiagram
@@ -214,13 +214,15 @@ sequenceDiagram
 
     Service->>Timer: Start timer (60fps)
     loop Every frame
-        Timer->>Processor: Check playing state
+        Timer->>Processor: Check playing and queued state of each waiting track
         Processor->>Timer: Return current state
 
         alt State changed
-            Timer->>Service: Update clip state
-            Service->>Timer: Stop timer
+            Timer->>Service: Update clip slot states
             Service->>UI: Notify state change
+        end
+        alt No track waits for a change
+            Service->>Timer: Stop timer
         end
     end
 ```
@@ -285,6 +287,32 @@ sequenceDiagram
     Provider->>Provider: Recalculate internal position
     Provider->>Audio: Continue with new position
 ```
+
+### Switching Clips on a Track
+
+Each track's clip playback data provider holds two cache slots: one being played and one for the next clip. A launched clip is written into the idle slot and marked as queued. The audio thread switches to the queued slot at its quantization point, so the playing clip continues until then; MIDI notes of the replaced clip are silenced at the switch point.
+
+```mermaid
+sequenceDiagram
+    participant UI as UI Thread
+    participant State as Slot State (atomic)
+    participant Audio as Audio Thread
+
+    UI->>State: Take back any queued slot
+    UI->>UI: Write clip into the idle slot
+    UI->>State: Mark idle slot as queued
+
+    loop Every block
+        Audio->>State: Read played and queued slot
+        Audio->>Audio: Render played slot up to the quantization point
+        Audio->>State: Switch to the queued slot (compare-exchange)
+        Audio->>Audio: Render the new clip from its start
+    end
+```
+
+The slot state packs the played slot, the queued slot and a counter into one atomic value. The UI thread only writes to a slot while nothing is queued, so the audio thread cannot switch to it at the same time. A newer launch replaces a queued clip that has not started, and a stop discards it.
+
+The service tracks a playing and a queued clip slot per track. The queued slot shows as queued until the provider reports the switch; then it shows as playing and the replaced slot as stopped.
 
 ### Transport Position Handling
 

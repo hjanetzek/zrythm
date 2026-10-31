@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <optional>
+#include <variant>
 
 #include "dsp/graph_node.h"
 #include "dsp/midi_event_buffer.h"
@@ -20,18 +23,16 @@ namespace zrythm::structure::tracks
  */
 class ClipPlaybackDataProvider final
 {
-  struct MidiCache
+  using MidiContent = std::vector<dsp::SampleBasedMidiEvent>;
+  using AudioContent = juce::AudioSampleBuffer;
+
+  /**
+   * @brief Rendered clip contents prepared for realtime playback.
+   */
+  struct PlaybackCache
   {
-    MidiCache (
-      std::vector<dsp::SampleBasedMidiEvent> &&midi_events,
-      structure::tracks::ClipQuantizeOption    quantize_opt,
-      units::precise_tick_t                    end_position)
-        : midi_events_ (std::move (midi_events)), quantize_opt_ (quantize_opt),
-          end_position_ (end_position)
-    {
-    }
-    std::vector<dsp::SampleBasedMidiEvent> midi_events_;
-    structure::tracks::ClipQuantizeOption  quantize_opt_;
+    std::variant<MidiContent, AudioContent> content_;
+    structure::tracks::ClipQuantizeOption   quantize_opt_;
 
     /**
      * @brief End position to loop at.
@@ -39,55 +40,61 @@ class ClipPlaybackDataProvider final
     units::precise_tick_t end_position_;
   };
 
-  struct AudioCache
-  {
-    AudioCache (
-      juce::AudioSampleBuffer               audio_buffer,
-      structure::tracks::ClipQuantizeOption quantize_opt,
-      units::precise_tick_t                 end_position)
-        : audio_buffer_ (std::move (audio_buffer)),
-          quantize_opt_ (quantize_opt), end_position_ (end_position)
-    {
-    }
-
-    juce::AudioSampleBuffer               audio_buffer_;
-    structure::tracks::ClipQuantizeOption quantize_opt_;
-
-    /**
-     * @brief End position to loop at.
-     */
-    units::precise_tick_t end_position_;
-  };
+  using CacheSlot = farbot::RealtimeObject<
+    std::optional<PlaybackCache>,
+    farbot::RealtimeObjectOptions::nonRealtimeMutatable>;
 
 public:
   ClipPlaybackDataProvider (const dsp::TempoMap &tempo_map);
 
   /**
-   * @brief Generate the MIDI event sequence to be used during realtime
-   * processing.
+   * @brief Queues a MIDI clip to start playing at its quantization point.
    *
-   * To be called as needed from the UI thread when a new cache is requested.
+   * A clip that is already playing continues until that point. Replaces a
+   * clip that was queued earlier and has not started yet.
+   *
+   * Must be called from the UI thread.
    */
   void generate_midi_events (
     const arrangement::MidiClip          &midi_clip,
     structure::tracks::ClipQuantizeOption quantize_option);
 
   /**
-   * @brief Generate the audio buffer to be used during realtime processing.
+   * @brief Queues an audio clip to start playing at its quantization point.
    *
-   * To be called as needed from the UI thread when a new cache is requested.
+   * @see generate_midi_events()
    */
   void generate_audio_events (
     const arrangement::AudioClip         &audio_clip,
     structure::tracks::ClipQuantizeOption quantize_option);
 
   /**
-   * @brief Requests that playback is stopped at the next quantization point.
+   * @brief Stops playback and discards a queued clip.
    *
-   * @param quantize_option
+   * Playback stops on the next processing cycle. Must be called from the UI
+   * thread.
+   *
+   * @param quantize_option Currently unused: playback always stops on the
+   * next processing cycle.
    */
   void
   queue_stop_playback (structure::tracks::ClipQuantizeOption quantize_option);
+
+  /**
+   * @brief Discards a queued clip that has not started yet.
+   *
+   * A clip that is already playing continues. Must be called from the UI
+   * thread.
+   */
+  void cancel_pending_launch ();
+
+  /**
+   * @brief Whether a clip is queued and has not started playing yet.
+   */
+  bool launch_pending () const
+  {
+    return pending_slot (slot_state_.load ()) != kNoSlot;
+  }
 
   // TrackEventProvider interface
   void process_midi_events (
@@ -114,43 +121,90 @@ public:
 
 private:
   /**
-   * @brief Common logic for updating playback position based on timeline
-   * changes.
+   * @brief Packed slot state.
+   *
+   * Bits 0-1 hold the index of the slot being played, bits 2-3 the index of
+   * the slot queued to play next (or kNoSlot), and the remaining bits a
+   * counter that changes every time a clip is queued.
+   */
+  using SlotState = uint32_t;
+  static constexpr uint32_t kNoSlot = 3;
+
+  static constexpr uint32_t current_slot (SlotState state)
+  {
+    return state & 0b11U;
+  }
+  static constexpr uint32_t pending_slot (SlotState state)
+  {
+    return (state >> 2) & 0b11U;
+  }
+  static constexpr uint32_t generation (SlotState state) { return state >> 4; }
+  static constexpr SlotState
+  make_slot_state (uint32_t current, uint32_t pending, uint32_t gen)
+  {
+    return current | (pending << 2) | (gen << 4);
+  }
+
+  /**
+   * @brief Takes back a queued clip so that the slot state cannot change
+   * until the UI thread stores a new one.
+   *
+   * @return The slot state after retracting.
+   */
+  SlotState retract_pending_launch ();
+
+  /**
+   * @brief Writes @p cache into the slot that is not being played and
+   * queues it.
+   */
+  void queue_cache (PlaybackCache &&cache);
+
+  /**
+   * @brief Distance from the block start to the quantization point, if the
+   * point lies within the block.
+   *
+   * Immediate quantization yields 0.
+   */
+  std::optional<units::sample_t> quantization_offset_in_block (
+    const dsp::graph::ProcessBlockInfo   &time_nfo,
+    structure::tracks::ClipQuantizeOption quantize_opt) const;
+
+  /**
+   * @brief Recalculates the position within the clip after the transport
+   * position changed.
    */
   void update_playback_position (
     const dsp::graph::ProcessBlockInfo &time_nfo,
     units::sample_t                     clip_loop_end_samples);
 
   /**
-   * @brief Portion of the current block to render from the clip.
+   * @brief Renders one block: the playing clip up to the point where a
+   * queued clip takes over, then the queued clip.
+   *
+   * @param render_chunk Called with the clip contents, the offset within
+   * the clip, the number of samples, the samples already rendered in this
+   * segment and the output buffer offset of the segment.
+   * @param on_playback_end Called with the output buffer offset at which a
+   * playing clip stops or is replaced.
    */
-  struct BlockPlaybackRange
-  {
-    /** Offset within the clip to start reading from. */
-    units::sample_t internal_buffer_start_offset;
-
-    /** Number of samples to render (0 if playback does not start yet). */
-    units::sample_t samples_to_process;
-
-    /**
-     * Offset in the output buffer at which rendering starts.
-     *
-     * Equals the block's buffer offset, plus the distance to the
-     * quantization point when playback starts within this block.
-     */
-    units::sample_t output_buffer_timestamp_offset;
-  };
+  template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+  void process_block (
+    const dsp::graph::ProcessBlockInfo &time_nfo,
+    RenderChunkFunc                     render_chunk,
+    EndFunc on_playback_end) noexcept [[clang::nonblocking]];
 
   /**
-   * @brief Common logic for handling quantization and playback start.
-   *
-   * Playback starts only if the quantization point lies within the block
-   * (`[transport_position_, transport_position_ + nframes_)`).
+   * @brief Renders @p length samples of the clip in @p slot, starting
+   * @p block_offset samples into the block.
    */
-  BlockPlaybackRange handle_quantization_and_start (
-    const dsp::graph::ProcessBlockInfo   &time_nfo,
-    units::sample_t                       clip_loop_end_samples,
-    structure::tracks::ClipQuantizeOption quantize_opt);
+  template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+  void render_slot (
+    uint32_t                            slot,
+    const dsp::graph::ProcessBlockInfo &time_nfo,
+    units::sample_t                     block_offset,
+    units::sample_t                     length,
+    RenderChunkFunc                    &render_chunk,
+    EndFunc &on_playback_end) noexcept [[clang::nonblocking]];
 
   /**
    * @brief Template method for processing chunks with looping.
@@ -163,25 +217,21 @@ private:
     units::sample_t output_buffer_timestamp_offset,
     ProcessFunc     process_chunk);
 
-  /**
-   * @brief Clears the active buffers that are used for realtime playback.
-   *
-   * This will result in playback getting stopped on the next processing cycle.
-   */
-  void clear_active_buffers ();
-
 private:
-  /** Active MIDI playback sequence for realtime access. */
-  farbot::RealtimeObject<
-    std::optional<MidiCache>,
-    farbot::RealtimeObjectOptions::nonRealtimeMutatable>
-    active_midi_playback_sequence_;
+  /**
+   * @brief Two cache slots: one being played and one for the next clip.
+   *
+   * The UI thread writes only to a slot that is neither played nor queued.
+   */
+  std::array<CacheSlot, 2> slots_;
 
-  /** Active audio playback buffer for realtime access. */
-  farbot::RealtimeObject<
-    std::optional<AudioCache>,
-    farbot::RealtimeObjectOptions::nonRealtimeMutatable>
-    active_audio_playback_buffer_;
+  /**
+   * @brief Which slot is played and which is queued (see SlotState).
+   *
+   * The audio thread changes it only to switch to the queued slot; the UI
+   * thread changes it to queue or take back a slot.
+   */
+  std::atomic<SlotState> slot_state_{ make_slot_state (0, kNoSlot, 0) };
 
   const dsp::TempoMap &tempo_map_;
 
@@ -196,15 +246,6 @@ private:
   std::atomic<bool> playing_{ false };
 
   /**
-   * @brief Last known playing status to detect transitions from playing to
-   * stopped during processing.
-   *
-   * This is used to detect when we need to send all-notes-off when a clip stops
-   * playing.
-   */
-  bool was_playing_{ false };
-
-  /**
    * @brief Current internal buffer position (offset within the clip)
    *
    * This is atomic because it may be accessed from the UI thread to update
@@ -213,24 +254,18 @@ private:
   std::atomic<units::sample_t> internal_clip_buffer_position_;
 
   /**
-   * @brief Last timeline position we've seen
-   *
-   * Accessed from both the RT audio thread and the non-RT thread
-   * (via queue_stop_playback), so must be atomic.
+   * @brief Last timeline position we've seen (audio thread only).
    */
-  std::atomic<units::sample_t> last_seen_timeline_position_;
+  units::sample_t last_seen_timeline_position_;
 
   /**
-   * @brief Timeline position where the clip was launched
-   *
-   * Accessed from both the RT audio thread and the non-RT thread
-   * (via queue_stop_playback), so must be atomic.
+   * @brief Timeline position where the clip was launched (audio thread
+   * only).
    */
-  std::atomic<units::sample_t> clip_launch_timeline_position_;
+  units::sample_t clip_launch_timeline_position_;
 
   static_assert (decltype (internal_clip_buffer_position_)::is_always_lock_free);
-  static_assert (decltype (last_seen_timeline_position_)::is_always_lock_free);
-  static_assert (decltype (clip_launch_timeline_position_)::is_always_lock_free);
+  static_assert (decltype (slot_state_)::is_always_lock_free);
 };
 
 }

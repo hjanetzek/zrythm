@@ -13,8 +13,15 @@ ClipPlaybackService::ClipPlaybackService (
   utils::IObjectRegistry        &registry,
   const tracks::TrackCollection &track_collection,
   QObject *                      parent)
-    : QObject (parent), registry_ (registry), track_collection_ (track_collection)
+    : QObject (parent), registry_ (registry),
+      track_collection_ (track_collection),
+      playback_state_monitor_ (utils::make_qobject_unique<QTimer> (this))
 {
+  // Check about once per displayed frame
+  playback_state_monitor_->setInterval (16);
+  QObject::connect (
+    playback_state_monitor_.get (), &QTimer::timeout, this,
+    &ClipPlaybackService::checkPlaybackState);
 }
 
 void
@@ -124,13 +131,15 @@ void
 ClipPlaybackService::stopAllClips (
   structure::tracks::ClipQuantizeOption quantize)
 {
-  // Stop all currently playing clips
-  for (const auto &[trackUuid, clipSlot] : playing_clips_)
+  // Stopping modifies the per-track states, so collect the tracks first
+  const auto track_uuids =
+    track_states_ | std::views::keys | std::ranges::to<std::vector> ();
+  for (const auto &track_uuid : track_uuids)
     {
-      auto * track = track_collection_.track_ref_at_id (trackUuid).get ();
+      auto * track = track_collection_.track_ref_at_id (track_uuid).get ();
       if (track != nullptr)
         {
-          stopClip (track, clipSlot, quantize);
+          stopTrackClips (track, quantize);
         }
     }
 }
@@ -146,11 +155,17 @@ ClipPlaybackService::stopTrackClips (
       return;
     }
 
-  const auto it = playing_clips_.find (track->get_uuid ());
-  if (it == playing_clips_.end ())
+  const auto it = track_states_.find (track->get_uuid ());
+  if (it == track_states_.end ())
     return;
 
-  stopClip (track, it->second, quantize);
+  // Stopping the playing clip also discards a queued one
+  auto * clip_slot =
+    it->second.playing_slot != nullptr
+      ? it->second.playing_slot
+      : it->second.queued_slot;
+  if (clip_slot != nullptr)
+    stopClip (track, clip_slot, quantize);
 }
 
 bool
@@ -169,10 +184,10 @@ ClipPlaybackService::getClipPlaybackPosition (ClipSlot * clipSlot) const
   if (clipSlot == nullptr)
     return -1.0;
 
-  // Find the track that has this clip slot
-  for (const auto &[trackUuid, playingClipSlot] : playing_clips_)
+  // Find the track that plays this clip slot
+  for (const auto &[trackUuid, track_state] : track_states_)
     {
-      if (playingClipSlot == clipSlot)
+      if (track_state.playing_slot == clipSlot)
         {
           // Get the track
           auto * track = track_collection_.track_ref_at_id (trackUuid).get ();
@@ -218,11 +233,13 @@ ClipPlaybackService::getPlayingClips () const
 {
   QList<ClipSlot *> result;
 
-  for (const auto &[trackUuid, clipSlot] : playing_clips_)
+  for (const auto &track_state : track_states_ | std::views::values)
     {
-      if (isClipPlaying (clipSlot))
+      for (
+        auto * clip_slot : { track_state.playing_slot, track_state.queued_slot })
         {
-          result.append (clipSlot);
+          if (isClipPlaying (clip_slot) && !result.contains (clip_slot))
+            result.append (clip_slot);
         }
     }
 
@@ -257,15 +274,18 @@ ClipPlaybackService::setTrackToTimelineMode (tracks::Track * track)
   cancelPendingClipOperations (track);
 
   // Stop a clip that is already playing
-  const auto it = playing_clips_.find (track->get_uuid ());
-  if (it != playing_clips_.end ())
+  const auto it = track_states_.find (track->get_uuid ());
+  if (it != track_states_.end ())
     {
-      processor->clip_playback_data_provider ().queue_stop_playback (
-        structure::tracks::ClipQuantizeOption::Immediate);
-      updateClipSlotState (it->second, ClipSlot::ClipState::Stopped);
-      auto * clip_slot = it->second;
-      playing_clips_.erase (it);
-      Q_EMIT clipStopped (track, clip_slot);
+      auto * clip_slot = it->second.playing_slot;
+      track_states_.erase (it);
+      if (clip_slot != nullptr)
+        {
+          processor->clip_playback_data_provider ().queue_stop_playback (
+            structure::tracks::ClipQuantizeOption::Immediate);
+          updateClipSlotState (clip_slot, ClipSlot::ClipState::Stopped);
+          Q_EMIT clipStopped (track, clip_slot);
+        }
     }
 
   // Set the track to timeline mode
@@ -294,6 +314,19 @@ ClipPlaybackService::scheduleClipLaunch (
   if (clip == nullptr)
     return;
 
+  auto &track_state = track_states_[track->get_uuid ()];
+
+  // A clip queued earlier on this track will not start
+  if (
+    track_state.queued_slot != nullptr && track_state.queued_slot != clipSlot
+    && track_state.queued_slot != track_state.playing_slot)
+    {
+      updateClipSlotState (
+        track_state.queued_slot, ClipSlot::ClipState::Stopped);
+    }
+  track_state.queued_slot = clipSlot;
+  track_state.stop_requested = false;
+
   // Update clip slot state to queued
   updateClipSlotState (clipSlot, ClipSlot::ClipState::PlayQueued);
 
@@ -311,11 +344,8 @@ ClipPlaybackService::scheduleClipLaunch (
       generateClipEvents (track, *audio_clip, quantize);
     }
 
-  // Track the playing clip
-  playing_clips_[track->get_uuid ()] = clipSlot;
-
   // Start monitoring for the actual playback state change
-  startPlaybackStateMonitor (track, clipSlot, ClipSlot::ClipState::Playing);
+  startPlaybackStateMonitor ();
 
   // Emit signal
   Q_EMIT clipLaunched (track, clipSlot);
@@ -330,22 +360,51 @@ ClipPlaybackService::scheduleClipStop (
   if ((track == nullptr) || (clipSlot == nullptr))
     return;
 
-  // Update clip slot state to queued
-  updateClipSlotState (clipSlot, ClipSlot::ClipState::StopQueued);
-
   auto * processor = track->get_track_processor ();
   if (processor == nullptr)
     return;
+  auto &provider = processor->clip_playback_data_provider ();
+
+  auto &track_state = track_states_[track->get_uuid ()];
+
+  // A queued clip that has not started yet is discarded right away, and
+  // the playing clip continues
+  if (
+    clipSlot == track_state.queued_slot && clipSlot != track_state.playing_slot)
+    {
+      provider.cancel_pending_launch ();
+      track_state.queued_slot = nullptr;
+      updateClipSlotState (clipSlot, ClipSlot::ClipState::Stopped);
+      Q_EMIT clipStopped (track, clipSlot);
+      return;
+    }
+
+  // Stopping the playing clip also discards a queued one
+  if (
+    track_state.queued_slot != nullptr
+    && track_state.queued_slot != track_state.playing_slot)
+    {
+      updateClipSlotState (
+        track_state.queued_slot, ClipSlot::ClipState::Stopped);
+    }
+  track_state.queued_slot = nullptr;
+  if (track_state.playing_slot == nullptr)
+    track_state.playing_slot = clipSlot;
+  track_state.stop_requested = true;
+  auto * stopping_slot = track_state.playing_slot;
+
+  // Update clip slot state to queued
+  updateClipSlotState (stopping_slot, ClipSlot::ClipState::StopQueued);
 
   // Queue stop playback with quantization in the clip launcher event
   // provider
-  processor->clip_playback_data_provider ().queue_stop_playback (quantize);
+  provider.queue_stop_playback (quantize);
 
   // Start monitoring for the actual playback state change
-  startPlaybackStateMonitor (track, clipSlot, ClipSlot::ClipState::Stopped);
+  startPlaybackStateMonitor ();
 
   // Emit signal
-  Q_EMIT clipStopped (track, clipSlot);
+  Q_EMIT clipStopped (track, stopping_slot);
 }
 
 void
@@ -360,64 +419,81 @@ ClipPlaybackService::updateClipSlotState (
 }
 
 void
-ClipPlaybackService::startPlaybackStateMonitor (
-  tracks::Track *     track,
-  ClipSlot *          clipSlot,
-  ClipSlot::ClipState targetState)
+ClipPlaybackService::startPlaybackStateMonitor ()
 {
-  if ((track == nullptr) || (clipSlot == nullptr))
-    return;
-
-  // Create a timer to monitor the playback state
-  auto timer = utils::make_qobject_unique<QTimer> (this);
-  timer->setInterval (16); // Check every frame (approximately 60fps)
-
-  // Connect the timer's timeout signal to our check method
-  QObject::connect (
-    timer.get (), &QTimer::timeout, this,
-    [this, track, clipSlot, targetState] () {
-      auto * processor = track->get_track_processor ();
-      if (!processor)
-        return;
-
-      // Check if the track processor has reached the target state
-      bool isPlaying = processor->clip_playback_data_provider ().playing ();
-
-      if (
-        (targetState == ClipSlot::ClipState::Playing && isPlaying)
-        || (targetState == ClipSlot::ClipState::Stopped && !isPlaying))
-        {
-          // Stop the timer
-          auto it = playback_state_monitors_.find (track->get_uuid ());
-          if (it != playback_state_monitors_.end ())
-            {
-              playback_state_monitors_.erase (it);
-            }
-
-          // Update the clip slot state
-          updateClipSlotState (clipSlot, targetState);
-
-          // If stopping, remove from playing clips tracking
-          if (targetState == ClipSlot::ClipState::Stopped)
-            {
-              playing_clips_.erase (track->get_uuid ());
-            }
-        }
-    });
-
-  // Start the timer
-  timer->start ();
-
-  // Store the timer for later access
-  playback_state_monitors_[track->get_uuid ()] =
-    std::make_tuple (std::move (timer), clipSlot, targetState);
+  if (!playback_state_monitor_->isActive ())
+    playback_state_monitor_->start ();
 }
 
 void
 ClipPlaybackService::checkPlaybackState ()
 {
-  // This method can be called periodically to check all timers
-  // The actual checking is done by the individual timer callbacks
+  // Slot state changes are applied after the scan, since their signal
+  // handlers may call back into this service
+  std::vector<std::pair<ClipSlot *, ClipSlot::ClipState>> state_changes;
+  const auto                                              record_state_change =
+    [&state_changes] (ClipSlot * clip_slot, ClipSlot::ClipState new_state) {
+      state_changes.emplace_back (clip_slot, new_state);
+    };
+
+  std::erase_if (track_states_, [&] (auto &entry) {
+    auto &[track_uuid, track_state] = entry;
+    const auto track_ref = track_collection_.track_ref_at_id (track_uuid);
+    auto *     track = track_ref.get ();
+    auto *     processor =
+      track != nullptr ? track->get_track_processor () : nullptr;
+    if (processor == nullptr)
+      return true;
+
+    const auto &provider = processor->clip_playback_data_provider ();
+    const bool  playing = provider.playing ();
+
+    // The queued clip took over: the previously playing clip has stopped
+    if (
+      track_state.queued_slot != nullptr && !provider.launch_pending ()
+      && playing)
+      {
+        if (
+          track_state.playing_slot != nullptr
+          && track_state.playing_slot != track_state.queued_slot)
+          {
+            record_state_change (
+              track_state.playing_slot, ClipSlot::ClipState::Stopped);
+          }
+        track_state.playing_slot = track_state.queued_slot;
+        track_state.queued_slot = nullptr;
+        record_state_change (
+          track_state.playing_slot, ClipSlot::ClipState::Playing);
+      }
+
+    // The playing clip ended (stopped or cleared)
+    if (
+      track_state.playing_slot != nullptr && !playing
+      && (track_state.stop_requested || track_state.queued_slot == nullptr))
+      {
+        record_state_change (
+          track_state.playing_slot, ClipSlot::ClipState::Stopped);
+        track_state.playing_slot = nullptr;
+        track_state.stop_requested = false;
+      }
+
+    // Keep tracks that still play or wait for a change
+    return track_state.queued_slot == nullptr
+           && (track_state.playing_slot == nullptr || !playing);
+  });
+
+  if (
+    std::ranges::none_of (track_states_ | std::views::values, [] (const auto &s) {
+      return s.queued_slot != nullptr || s.stop_requested;
+    }))
+    {
+      playback_state_monitor_->stop ();
+    }
+
+  for (const auto &[clip_slot, new_state] : state_changes)
+    {
+      updateClipSlotState (clip_slot, new_state);
+    }
 }
 
 void
@@ -426,35 +502,35 @@ ClipPlaybackService::cancelPendingClipOperations (tracks::Track * track)
   if (track == nullptr)
     return;
 
-  const auto trackUuid = track->get_uuid ();
+  const auto it = track_states_.find (track->get_uuid ());
+  if (it == track_states_.end ())
+    return;
+  auto &track_state = it->second;
 
-  // Check if there's a pending operation for this track
-  auto it = playback_state_monitors_.find (trackUuid);
-  if (it != playback_state_monitors_.end ())
+  // Discard a queued clip that has not started
+  if (track_state.queued_slot != nullptr)
     {
-      // Get the clip slot and target state
-      auto   timer = std::move (std::get<0> (it->second));
-      auto * clipSlot = std::get<1> (it->second);
-
-      // Stop the timer
-      if (timer)
-        {
-          timer->stop ();
-        }
-
-      // Remove the monitor
-      playback_state_monitors_.erase (it);
-
-      // If the clip is in a queued state, set it back to stopped
-      if (
-        (clipSlot != nullptr)
-        && (clipSlot->state () == ClipSlot::ClipState::PlayQueued || clipSlot->state () == ClipSlot::ClipState::StopQueued))
-        {
-          updateClipSlotState (clipSlot, ClipSlot::ClipState::Stopped);
-        }
-
-      // Remove from playing clips tracking if it was there
-      playing_clips_.erase (trackUuid);
+      if (auto * processor = track->get_track_processor ())
+        processor->clip_playback_data_provider ().cancel_pending_launch ();
+      if (track_state.queued_slot != track_state.playing_slot)
+        updateClipSlotState (
+          track_state.queued_slot, ClipSlot::ClipState::Stopped);
+      else
+        updateClipSlotState (
+          track_state.queued_slot, ClipSlot::ClipState::Playing);
+      track_state.queued_slot = nullptr;
     }
+
+  // A requested stop is already in effect
+  if (track_state.stop_requested)
+    {
+      updateClipSlotState (
+        track_state.playing_slot, ClipSlot::ClipState::Stopped);
+      track_state.playing_slot = nullptr;
+      track_state.stop_requested = false;
+    }
+
+  if (track_state.playing_slot == nullptr)
+    track_states_.erase (it);
 }
 }

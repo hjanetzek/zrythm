@@ -857,6 +857,200 @@ TEST_F (
     }
 }
 
+namespace
+{
+std::vector<units::sample_u32_t>
+all_notes_off_timestamps (const dsp::MidiEventBuffer &events)
+{
+  std::vector<units::sample_u32_t> timestamps;
+  for (const auto &event : events)
+    {
+      if (utils::midi::midi_is_all_notes_off (event.data ()))
+        timestamps.push_back (event.time ());
+    }
+  return timestamps;
+}
+}
+
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  QueuedClipReplacesPlayingClipAtQuantizationPoint)
+{
+  // Clip A plays immediately
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+  ASSERT_EQ (find_event_timestamps (output_buffer, 60).size (), 1);
+
+  // Clip B is queued for the next beat; A keeps playing until then
+  provider_->generate_midi_events (
+    *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
+  output_buffer.clear ();
+  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
+  EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
+  EXPECT_TRUE (provider_->playing ());
+  EXPECT_TRUE (provider_->launch_pending ());
+
+  // Block containing the beat boundary 100 samples after its start
+  const auto beat_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (960.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start - 100, 0, 256), output_buffer);
+
+  // A's notes are silenced and B starts, both on the beat
+  const auto notes_off = all_notes_off_timestamps (output_buffer);
+  ASSERT_EQ (notes_off.size (), 16);
+  EXPECT_TRUE (std::ranges::all_of (notes_off, [] (const auto ts) {
+    return ts == units::samples (100);
+  }));
+  const auto pitch_62_events = find_event_timestamps (output_buffer, 62);
+  ASSERT_EQ (pitch_62_events.size (), 1);
+  EXPECT_EQ (pitch_62_events[0], units::samples (100));
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 60).empty ());
+  EXPECT_TRUE (provider_->playing ());
+  EXPECT_FALSE (provider_->launch_pending ());
+  EXPECT_EQ (
+    provider_->current_playback_position_in_clip (), units::samples (156));
+}
+
+TEST_F (ClipPlaybackDataProviderTest, NewerQueuedClipReplacesEarlierQueuedClip)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+
+  provider_->generate_midi_events (
+    *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBar);
+  provider_->generate_midi_events (
+    *create_simple_region (64), structure::tracks::ClipQuantizeOption::NextBar);
+
+  const auto bar_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (3840.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (bar_start - 10, 0, 256), output_buffer);
+
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
+  const auto pitch_64_events = find_event_timestamps (output_buffer, 64);
+  ASSERT_EQ (pitch_64_events.size (), 1);
+  EXPECT_EQ (pitch_64_events[0], units::samples (10));
+}
+
+TEST_F (ClipPlaybackDataProviderTest, CancelPendingLaunchKeepsPlayingClip)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+
+  provider_->generate_midi_events (
+    *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
+  provider_->cancel_pending_launch ();
+  EXPECT_FALSE (provider_->launch_pending ());
+
+  const auto beat_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (960.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start - 100, 0, 256), output_buffer);
+
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
+  EXPECT_TRUE (all_notes_off_timestamps (output_buffer).empty ());
+  EXPECT_TRUE (provider_->playing ());
+}
+
+TEST_F (ClipPlaybackDataProviderTest, StopDiscardsQueuedClip)
+{
+  provider_->generate_midi_events (
+    *create_simple_region (60),
+    structure::tracks::ClipQuantizeOption::Immediate);
+  auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+  provider_->process_midi_events (create_time_info (0, 0, 256), output_buffer);
+
+  provider_->generate_midi_events (
+    *create_simple_region (62), structure::tracks::ClipQuantizeOption::NextBeat);
+  provider_->queue_stop_playback (
+    structure::tracks::ClipQuantizeOption::Immediate);
+  EXPECT_FALSE (provider_->launch_pending ());
+
+  // The playing clip stops on the next block
+  output_buffer.clear ();
+  provider_->process_midi_events (create_time_info (256, 0, 256), output_buffer);
+  EXPECT_EQ (all_notes_off_timestamps (output_buffer).size (), 16);
+  EXPECT_FALSE (provider_->playing ());
+
+  // The queued clip never starts
+  const auto beat_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (960.0) })
+      .in (units::sample));
+  output_buffer.clear ();
+  provider_->process_midi_events (
+    create_time_info (beat_start - 100, 0, 256), output_buffer);
+  EXPECT_TRUE (find_event_timestamps (output_buffer, 62).empty ());
+  EXPECT_FALSE (provider_->playing ());
+}
+
+TEST_F (
+  ClipPlaybackDataProviderTest,
+  AudioQueuedClipReplacesPlayingClipAtQuantizationPoint)
+{
+  auto * clip_a = create_simple_audio_clip (1.0f);
+  auto * clip_b = create_simple_audio_clip (2.0f);
+
+  provider_->generate_audio_events (
+    *clip_a, structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> output_left (256, 0.0f);
+  std::vector<float> output_right (256, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (0, 0, 256), output_left, output_right);
+
+  provider_->generate_audio_events (
+    *clip_b, structure::tracks::ClipQuantizeOption::NextBar);
+
+  // Reference: clip B launched immediately at a block start
+  ClipPlaybackDataProvider reference_provider (*tempo_map_);
+  reference_provider.generate_audio_events (
+    *clip_b, structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> reference_left (256, 0.0f);
+  std::vector<float> reference_right (256, 0.0f);
+  reference_provider.process_audio_events (
+    create_time_info (0, 0, 256), reference_left, reference_right);
+
+  // Block containing the bar boundary 100 samples after its start
+  const auto bar_start = static_cast<uint64_t> (
+    tempo_map_
+      ->tick_to_samples_rounded (dsp::TimelineTick{ units::ticks (3840.0) })
+      .in (units::sample));
+  std::ranges::fill (output_left, 0.0f);
+  std::ranges::fill (output_right, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (bar_start - 100, 0, 256), output_left, output_right);
+
+  // From the bar boundary on, the output is clip B from its first sample
+  for (const auto i : std::views::iota (100uz, output_left.size ()))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], reference_left[i - 100])
+        << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], reference_right[i - 100])
+        << "at sample " << i;
+    }
+  EXPECT_FALSE (provider_->launch_pending ());
+}
+
 TEST_F (ClipPlaybackDataProviderTest, StateManagementAcrossBuffers)
 {
   // Create a MIDI clip with notes at different positions

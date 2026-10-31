@@ -13,25 +13,53 @@ static constexpr bool CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG = false;
 
 ClipPlaybackDataProvider::ClipPlaybackDataProvider (
   const dsp::TempoMap &tempo_map)
-    : tempo_map_ (tempo_map)
+    : tempo_map_ (tempo_map), last_seen_timeline_position_ (units::samples (0)),
+      clip_launch_timeline_position_ (units::samples (0))
 {
   internal_clip_buffer_position_.store (units::samples (0));
-  last_seen_timeline_position_.store (units::samples (0));
-  clip_launch_timeline_position_.store (units::samples (0));
+}
+
+ClipPlaybackDataProvider::SlotState
+ClipPlaybackDataProvider::retract_pending_launch ()
+{
+  auto state = slot_state_.load (std::memory_order_acquire);
+  while (pending_slot (state) != kNoSlot)
+    {
+      // Fails if the audio thread switched to the queued slot meanwhile
+      if (
+        slot_state_.compare_exchange_weak (
+          state,
+          make_slot_state (current_slot (state), kNoSlot, generation (state)),
+          std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+          return make_slot_state (
+            current_slot (state), kNoSlot, generation (state));
+        }
+    }
+  return state;
 }
 
 void
-ClipPlaybackDataProvider::clear_active_buffers ()
+ClipPlaybackDataProvider::queue_cache (PlaybackCache &&cache)
 {
-  decltype (active_midi_playback_sequence_)::ScopedAccess<
-    farbot::ThreadType::nonRealtime>
-    rt_events{ active_midi_playback_sequence_ };
-  *rt_events = std::nullopt;
+  // With nothing queued, only this thread changes the slot state
+  const auto state = retract_pending_launch ();
+  const auto target_slot = 1U - current_slot (state);
+  {
+    CacheSlot::ScopedAccess<farbot::ThreadType::nonRealtime> slot{
+      slots_.at (target_slot)
+    };
+    *slot = std::move (cache);
+  }
+  slot_state_.store (
+    make_slot_state (current_slot (state), target_slot, generation (state) + 1),
+    std::memory_order_release);
+}
 
-  decltype (active_audio_playback_buffer_)::ScopedAccess<
-    farbot::ThreadType::nonRealtime>
-    rt_audio{ active_audio_playback_buffer_ };
-  *rt_audio = std::nullopt;
+void
+ClipPlaybackDataProvider::cancel_pending_launch ()
+{
+  retract_pending_launch ();
 }
 
 void
@@ -59,13 +87,11 @@ ClipPlaybackDataProvider::generate_midi_events (
           std::span<const midi_byte_t>{ raw, raw_size }, sample_time));
     }
 
-  decltype (active_midi_playback_sequence_)::ScopedAccess<
-    farbot::ThreadType::nonRealtime>
-    rt_events{ active_midi_playback_sequence_ };
-  *rt_events = MidiCache{
-    std::move (native_events), quantize_option,
-    units::ticks (midi_clip.length ()->ticks ())
-  };
+  queue_cache (
+    PlaybackCache{
+      .content_ = std::move (native_events),
+      .quantize_opt_ = quantize_option,
+      .end_position_ = units::ticks (midi_clip.length ()->ticks ()) });
 }
 
 void
@@ -77,374 +103,23 @@ ClipPlaybackDataProvider::generate_audio_events (
   juce::AudioSampleBuffer audio_buffer;
   arrangement::ClipRenderer::serialize_to_buffer (audio_clip, audio_buffer);
 
-  decltype (active_audio_playback_buffer_)::ScopedAccess<
-    farbot::ThreadType::nonRealtime>
-    rt_audio{ active_audio_playback_buffer_ };
-  *rt_audio = AudioCache{
-    std::move (audio_buffer), quantize_option,
-    units::ticks (audio_clip.length ()->ticks ())
-  };
+  queue_cache (
+    PlaybackCache{
+      .content_ = std::move (audio_buffer),
+      .quantize_opt_ = quantize_option,
+      .end_position_ = units::ticks (audio_clip.length ()->ticks ()) });
 }
 
 void
 ClipPlaybackDataProvider::queue_stop_playback (
-  structure::tracks::ClipQuantizeOption quantize_option)
+  [[maybe_unused]] structure::tracks::ClipQuantizeOption quantize_option)
 {
-  // For now, we'll just clear the events immediately
-  // In a full implementation, this would respect the quantization option
-  // and stop at the appropriate quantized position
-  clear_active_buffers ();
-  internal_clip_buffer_position_.store (units::samples (0));
-  last_seen_timeline_position_.store (units::samples (0));
-  clip_launch_timeline_position_.store (units::samples (0));
-}
-
-void
-ClipPlaybackDataProvider::process_midi_events (
-  const dsp::graph::ProcessBlockInfo &time_nfo,
-  dsp::MidiEventBuffer               &output_buffer) noexcept
-{
-  [&] () {
-    decltype (active_midi_playback_sequence_)::ScopedAccess<
-      farbot::ThreadType::realtime>
-      cache_opt{ active_midi_playback_sequence_ };
-    if (!cache_opt->has_value ())
-      {
-        playing_.store (false);
-        return;
-      }
-    const auto &cache = cache_opt->value ();
-    const auto &midi_events = cache.midi_events_;
-    const auto  clip_loop_end_samples = tempo_map_.tick_to_samples_rounded (
-      dsp::TimelineTick{ cache.end_position_ });
-
-    if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-      z_debug (
-        "Clip loop end: {} ({})", clip_loop_end_samples, cache.end_position_);
-
-    // Update playback position based on timeline changes
-    update_playback_position (time_nfo, clip_loop_end_samples);
-
-    // Handle quantization and get start position and samples to process
-    const auto range = handle_quantization_and_start (
-      time_nfo, clip_loop_end_samples, cache.quantize_opt_);
-
-    if (range.samples_to_process == units::samples (0))
-      {
-        // Not time to start yet
-        return;
-      }
-
-    // Process MIDI chunks with looping using the common template method
-    process_chunks_with_looping (
-      range.internal_buffer_start_offset, range.samples_to_process,
-      clip_loop_end_samples, range.output_buffer_timestamp_offset,
-      [&] (
-        units::sample_t current_internal_buffer_offset,
-        units::sample_t samples_to_process_in_chunk,
-        units::sample_t total_samples_processed,
-        units::sample_t output_buffer_timestamp_offset) {
-        if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-          {
-            // Debug: Print all events in the sequence
-            z_debug ("Total events in sequence: {}", midi_events.size ());
-            for (size_t j = 0; j < midi_events.size (); ++j)
-              {
-                const auto &ev = midi_events[j];
-                if (utils::midi::midi_is_note_on (ev.data ()))
-                  {
-                    z_debug (
-                      "Sequence Event {}: note_on={}, timestamp={}", j,
-                      ev.data ()[1], ev.time_.in (units::samples));
-                  }
-              }
-          }
-
-        // Calculate events, offsetting from current position
-        auto it = std::ranges::lower_bound (
-          midi_events, current_internal_buffer_offset, {},
-          &dsp::SampleBasedMidiEvent::time_);
-        const auto chunk_end =
-          current_internal_buffer_offset + samples_to_process_in_chunk;
-
-        if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-          z_debug (
-            "Processing chunk: current_internal_buffer_offset={}, samples_to_process_in_chunk={}",
-            current_internal_buffer_offset.in (units::samples),
-            samples_to_process_in_chunk.in (units::samples));
-
-        for (; it != midi_events.end (); ++it)
-          {
-            if (it->time_ >= chunk_end)
-              break;
-
-            if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-              {
-                // Debug output for each event
-                if (utils::midi::midi_is_note_on (it->data ()))
-                  z_debug (
-                    "Event: note_on={}, timestamp={}", it->data ()[1],
-                    it->time_.in (units::samples));
-              }
-
-            // Calculate the timestamp in the output buffer
-            // This is the event's timestamp relative to the start of this
-            // processing chunk plus the total samples already processed
-            const auto event_offset_in_chunk =
-              it->time_.in<uint64_t> (units::samples)
-              - current_internal_buffer_offset.in<uint64_t> (units::samples);
-            const auto local_timestamp =
-              total_samples_processed.in<uint64_t> (units::samples)
-              + event_offset_in_chunk
-              + output_buffer_timestamp_offset.in<uint64_t> (units::samples);
-
-            const auto d = it->data ();
-            const auto ts = au::floor_as<uint32_t> (
-              units::samples, units::samples (local_timestamp));
-            output_buffer.push_back (ts, d);
-            if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-              z_debug ("Adding event with local_timestamp={}", local_timestamp);
-          }
-      });
-  }();
-
-  // Check for transition from playing to stopped and send all-notes-off
-  bool current_playing = playing_.load ();
-
-  if (was_playing_ && !current_playing)
-    {
-      // We just transitioned from playing to stopped - send all-notes-off
-      for (const auto channel : std::views::iota (0, 16))
-        {
-          const auto ev = dsp::midi_event::make_all_notes_off (
-            static_cast<midi_byte_t> (channel), time_nfo.buffer_offset_);
-          output_buffer.push_back (ev.time_, ev.data ());
-        }
-    }
-
-  // Update was_playing for next iteration
-  was_playing_ = current_playing;
-}
-
-void
-ClipPlaybackDataProvider::update_playback_position (
-  const dsp::graph::ProcessBlockInfo &time_nfo,
-  units::sample_t                     clip_loop_end_samples)
-{
-  const auto current_timeline_position = time_nfo.transport_position_;
-  auto       previous_timeline_position = last_seen_timeline_position_.load ();
-
-  // If the timeline position moved (either forward or backward), recalculate
-  // our internal buffer position
-  if (
-    current_timeline_position != previous_timeline_position && playing_.load ())
-    {
-      if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-        z_debug (
-          "Detected timeline position change: {} -> {}, recalculating internal buffer position",
-          previous_timeline_position.in (units::samples),
-          current_timeline_position.in (units::samples));
-
-      // Calculate how long we've been playing since launch
-      auto time_since_clip_launch =
-        current_timeline_position - clip_launch_timeline_position_;
-
-      // Calculate position within the clip (modulo for looping)
-      auto new_internal_buffer_position =
-        time_since_clip_launch % clip_loop_end_samples;
-
-      if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-        z_debug (
-          "Time since clip launch: {}, clip loop end: {}, new internal buffer position: {}",
-          time_since_clip_launch.in (units::samples),
-          clip_loop_end_samples.in (units::samples),
-          new_internal_buffer_position.in (units::samples));
-
-      internal_clip_buffer_position_.store (new_internal_buffer_position);
-    }
-
-  // Update the last seen timeline position
-  last_seen_timeline_position_.store (current_timeline_position);
-}
-
-ClipPlaybackDataProvider::BlockPlaybackRange
-ClipPlaybackDataProvider::handle_quantization_and_start (
-  const dsp::graph::ProcessBlockInfo   &time_nfo,
-  units::sample_t                       clip_loop_end_samples,
-  structure::tracks::ClipQuantizeOption quantize_opt)
-{
-  const auto current_timeline_position = time_nfo.transport_position_;
-  const auto timeline_end_position = time_nfo.end_position ();
-  const auto current_timeline_tick_position =
-    tempo_map_.samples_to_tick (current_timeline_position);
-  const auto timeline_end_tick_position =
-    tempo_map_.samples_to_tick (timeline_end_position);
-
-  // Position we started playing from in our own buffer
-  auto internal_buffer_start_offset = internal_clip_buffer_position_.load ();
-  auto samples_to_process = time_nfo.nframes_;
-
-  // Offset to apply when writing events to the output buffer
-  auto output_buffer_timestamp_offset = time_nfo.buffer_offset_;
-
-  if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-    z_debug (
-      "Initial state: internal_buffer_start_offset={}, samples_to_process={}, output_buffer_timestamp_offset={}",
-      internal_buffer_start_offset.in (units::samples),
-      samples_to_process.in (units::samples),
-      output_buffer_timestamp_offset.in (units::samples));
-
-  if (!playing_.load ())
-    {
-      if (quantize_opt == structure::tracks::ClipQuantizeOption::Immediate)
-        {
-          // For Immediate quantization, start playing immediately
-          playing_.store (true);
-
-          clip_launch_timeline_position_.store (current_timeline_position);
-          internal_buffer_start_offset = units::samples (0);
-          // Keep the output_buffer_offset as set from buffer_offset_
-          // Don't adjust samples_to_play
-        }
-      else
-        {
-          // For other quantize options, do musical position calculations
-          // Check if it's time to play yet based on quantize option
-          const auto musical_pos_at_start = tempo_map_.tick_to_musical_position (
-            au::round_as<int64_t> (
-              units::ticks, current_timeline_tick_position.asQuantity ()));
-          const auto musical_pos_at_end = tempo_map_.tick_to_musical_position (
-            au::round_as<int64_t> (
-              units::ticks, timeline_end_tick_position.asQuantity ()));
-
-          bool                           should_start = false;
-          dsp::TempoMap::MusicalPosition musical_pos_to_start_playing_at{};
-
-          switch (quantize_opt)
-            {
-            case structure::tracks::ClipQuantizeOption::NextBar:
-              // Check if we're at or have crossed a bar boundary
-              if (musical_pos_at_end.bar > musical_pos_at_start.bar)
-                {
-                  // We crossed a bar boundary during this buffer
-                  should_start = true;
-                  // Start at the beginning of the new bar (beat 1, sixteenth 1)
-                  musical_pos_to_start_playing_at = {
-                    .bar = musical_pos_at_end.bar,
-                    .beat = 1,
-                    .sixteenth = 1,
-                    .tick = 0
-                  };
-                }
-              else if (
-                musical_pos_at_start.bar == musical_pos_at_end.bar
-                && musical_pos_at_start.beat == 1
-                && musical_pos_at_start.sixteenth == 1
-                && musical_pos_at_start.tick == 0)
-                {
-                  // We're exactly at the start of a bar
-                  should_start = true;
-                  musical_pos_to_start_playing_at = musical_pos_at_start;
-                }
-              break;
-
-            case structure::tracks::ClipQuantizeOption::NextBeat:
-              // Check if we're at or have crossed a beat boundary
-              if (musical_pos_at_end.bar > musical_pos_at_start.bar)
-                {
-                  // We crossed to a new bar, start at beat 1 of the new bar
-                  should_start = true;
-                  musical_pos_to_start_playing_at = {
-                    .bar = musical_pos_at_end.bar,
-                    .beat = 1,
-                    .sixteenth = 1,
-                    .tick = 0
-                  };
-                }
-              else if (musical_pos_at_end.beat > musical_pos_at_start.beat)
-                {
-                  // We crossed to a new beat within the same bar
-                  should_start = true;
-                  musical_pos_to_start_playing_at = {
-                    .bar = musical_pos_at_end.bar,
-                    .beat = musical_pos_at_end.beat,
-                    .sixteenth = 1,
-                    .tick = 0
-                  };
-                }
-              else if (
-                musical_pos_at_start.bar == musical_pos_at_end.bar
-                && musical_pos_at_start.beat == musical_pos_at_end.beat
-                && musical_pos_at_start.sixteenth == 1
-                && musical_pos_at_start.tick == 0)
-                {
-                  // We're exactly at the start of a beat
-                  should_start = true;
-                  musical_pos_to_start_playing_at = musical_pos_at_start;
-                }
-              break;
-
-            default:
-              // For other quantize options, default to immediate for now
-              should_start = true;
-              musical_pos_to_start_playing_at = musical_pos_at_start;
-              break;
-            }
-
-          if (!should_start)
-            {
-              // Not time to start yet
-              return {
-                units::samples (0), units::samples (0),
-                output_buffer_timestamp_offset
-              };
-            }
-
-          // The quantization point can round to slightly before the block
-          // start when the block starts exactly on it
-          const auto quantized_timeline_position = max (
-            tempo_map_.tick_to_samples_rounded (
-              tempo_map_.musical_position_to_tick (
-                musical_pos_to_start_playing_at)),
-            current_timeline_position);
-
-          // Distance from the block start to the quantization point
-          const auto samples_until_start =
-            quantized_timeline_position - current_timeline_position;
-          if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-            z_debug (
-              "Samples until quantized start: {}",
-              samples_until_start.in (units::samples));
-
-          if (samples_until_start >= samples_to_process)
-            {
-              // The quantization point is at the block end: start in the
-              // next block
-              return {
-                units::samples (0), units::samples (0),
-                output_buffer_timestamp_offset
-              };
-            }
-
-          playing_.store (true);
-          clip_launch_timeline_position_.store (quantized_timeline_position);
-
-          // Start at the beginning of our own buffer, at the quantization
-          // point within the output buffer
-          internal_buffer_start_offset = units::samples (0);
-          output_buffer_timestamp_offset += samples_until_start;
-          samples_to_process -= samples_until_start;
-          if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-            z_debug (
-              "Adjusted samples_to_process: {} samples",
-              samples_to_process.in (units::samples));
-        }
-    }
-
-  return {
-    internal_buffer_start_offset, samples_to_process,
-    output_buffer_timestamp_offset
+  // With nothing queued, the played slot cannot change while it is cleared
+  const auto state = retract_pending_launch ();
+  CacheSlot::ScopedAccess<farbot::ThreadType::nonRealtime> slot{
+    slots_.at (current_slot (state))
   };
+  *slot = std::nullopt;
 }
 
 template <typename ProcessFunc>
@@ -502,108 +177,335 @@ ClipPlaybackDataProvider::process_chunks_with_looping (
 }
 
 void
+ClipPlaybackDataProvider::update_playback_position (
+  const dsp::graph::ProcessBlockInfo &time_nfo,
+  units::sample_t                     clip_loop_end_samples)
+{
+  const auto current_timeline_position = time_nfo.transport_position_;
+  if (current_timeline_position == last_seen_timeline_position_)
+    return;
+
+  // Position within the clip, wrapped into [0, loop end) also when the
+  // transport moved before the launch position
+  const auto time_since_clip_launch =
+    current_timeline_position - clip_launch_timeline_position_;
+  auto new_internal_buffer_position =
+    time_since_clip_launch % clip_loop_end_samples;
+  if (new_internal_buffer_position < units::samples (0))
+    new_internal_buffer_position += clip_loop_end_samples;
+
+  if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
+    z_debug (
+      "Timeline position changed to {}: new internal buffer position: {}",
+      current_timeline_position.in (units::samples),
+      new_internal_buffer_position.in (units::samples));
+
+  internal_clip_buffer_position_.store (new_internal_buffer_position);
+}
+
+std::optional<units::sample_t>
+ClipPlaybackDataProvider::quantization_offset_in_block (
+  const dsp::graph::ProcessBlockInfo   &time_nfo,
+  structure::tracks::ClipQuantizeOption quantize_opt) const
+{
+  if (quantize_opt == structure::tracks::ClipQuantizeOption::Immediate)
+    return units::samples (0);
+
+  const auto current_timeline_position = time_nfo.transport_position_;
+  const auto musical_pos_at_start = tempo_map_.tick_to_musical_position (
+    au::round_as<int64_t> (
+      units::ticks,
+      tempo_map_.samples_to_tick (current_timeline_position).asQuantity ()));
+  const auto musical_pos_at_end = tempo_map_.tick_to_musical_position (
+    au::round_as<int64_t> (
+      units::ticks,
+      tempo_map_.samples_to_tick (time_nfo.end_position ()).asQuantity ()));
+
+  const auto at_beat_start =
+    musical_pos_at_start.sixteenth == 1 && musical_pos_at_start.tick == 0;
+
+  std::optional<dsp::TempoMap::MusicalPosition> musical_pos_to_start_at;
+  switch (quantize_opt)
+    {
+    case structure::tracks::ClipQuantizeOption::NextBar:
+      if (musical_pos_at_end.bar > musical_pos_at_start.bar)
+        {
+          // The block crosses a bar boundary
+          musical_pos_to_start_at = dsp::TempoMap::MusicalPosition{
+            .bar = musical_pos_at_end.bar, .beat = 1, .sixteenth = 1, .tick = 0
+          };
+        }
+      else if (musical_pos_at_start.beat == 1 && at_beat_start)
+        {
+          // The block starts exactly on a bar
+          musical_pos_to_start_at = musical_pos_at_start;
+        }
+      break;
+
+    case structure::tracks::ClipQuantizeOption::NextBeat:
+      if (
+        musical_pos_at_end.bar > musical_pos_at_start.bar
+        || musical_pos_at_end.beat > musical_pos_at_start.beat)
+        {
+          // The block crosses a beat boundary
+          musical_pos_to_start_at = dsp::TempoMap::MusicalPosition{
+            .bar = musical_pos_at_end.bar,
+            .beat = musical_pos_at_end.beat,
+            .sixteenth = 1,
+            .tick = 0
+          };
+        }
+      else if (at_beat_start)
+        {
+          // The block starts exactly on a beat
+          musical_pos_to_start_at = musical_pos_at_start;
+        }
+      break;
+
+    default:
+      // Finer quantization options are not supported yet and start
+      // immediately
+      return units::samples (0);
+    }
+
+  if (!musical_pos_to_start_at.has_value ())
+    return std::nullopt;
+
+  // The quantization point can round to slightly before the block start when
+  // the block starts exactly on it
+  const auto quantized_timeline_position = max (
+    tempo_map_.tick_to_samples_rounded (
+      tempo_map_.musical_position_to_tick (*musical_pos_to_start_at)),
+    current_timeline_position);
+  const auto offset = quantized_timeline_position - current_timeline_position;
+
+  // A point at the block end belongs to the next block
+  if (offset >= time_nfo.nframes_)
+    return std::nullopt;
+
+  return offset;
+}
+
+template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+void
+ClipPlaybackDataProvider::render_slot (
+  uint32_t                            slot,
+  const dsp::graph::ProcessBlockInfo &time_nfo,
+  units::sample_t                     block_offset,
+  units::sample_t                     length,
+  RenderChunkFunc                    &render_chunk,
+  EndFunc                            &on_playback_end) noexcept
+{
+  if (length == units::samples (0))
+    return;
+
+  CacheSlot::ScopedAccess<farbot::ThreadType::realtime> cache{
+    slots_.at (slot)
+  };
+  const auto * content =
+    cache->has_value () ? std::get_if<ContentT> (&(*cache)->content_) : nullptr;
+  if (content == nullptr)
+    {
+      if (playing_.load ())
+        {
+          playing_.store (false);
+          on_playback_end (time_nfo.buffer_offset_ + block_offset);
+        }
+      return;
+    }
+
+  if (!playing_.load ())
+    return;
+
+  const auto clip_loop_end_samples = tempo_map_.tick_to_samples_rounded (
+    dsp::TimelineTick{ (*cache)->end_position_ });
+  if (clip_loop_end_samples <= units::samples (0))
+    return;
+
+  // A clip that was already playing at the block start follows the
+  // transport position
+  if (block_offset == units::samples (0))
+    update_playback_position (time_nfo, clip_loop_end_samples);
+
+  process_chunks_with_looping (
+    internal_clip_buffer_position_.load (), length, clip_loop_end_samples,
+    time_nfo.buffer_offset_ + block_offset,
+    [&] (
+      units::sample_t current_internal_buffer_offset,
+      units::sample_t samples_to_process_in_chunk,
+      units::sample_t total_samples_processed,
+      units::sample_t output_buffer_timestamp_offset) {
+      render_chunk (
+        *content, current_internal_buffer_offset, samples_to_process_in_chunk,
+        total_samples_processed, output_buffer_timestamp_offset);
+    });
+}
+
+template <typename ContentT, typename RenderChunkFunc, typename EndFunc>
+void
+ClipPlaybackDataProvider::process_block (
+  const dsp::graph::ProcessBlockInfo &time_nfo,
+  RenderChunkFunc                     render_chunk,
+  EndFunc                             on_playback_end) noexcept
+{
+  const auto state = slot_state_.load (std::memory_order_acquire);
+  const auto pending = pending_slot (state);
+
+  // Where within the block the queued clip takes over, if it does
+  const auto switch_offset = [&] () -> std::optional<units::sample_t> {
+    if (pending == kNoSlot)
+      return std::nullopt;
+    CacheSlot::ScopedAccess<farbot::ThreadType::realtime> pending_cache{
+      slots_.at (pending)
+    };
+    if (
+      !pending_cache->has_value ()
+      || !std::holds_alternative<ContentT> ((*pending_cache)->content_))
+      return std::nullopt;
+    return quantization_offset_in_block (
+      time_nfo, (*pending_cache)->quantize_opt_);
+  }();
+
+  const auto block_length = time_nfo.nframes_;
+  const auto played_length = switch_offset.value_or (block_length);
+  render_slot<ContentT> (
+    current_slot (state), time_nfo, units::samples (0), played_length,
+    render_chunk, on_playback_end);
+
+  if (switch_offset.has_value ())
+    {
+      auto expected_state = state;
+      if (
+        slot_state_.compare_exchange_strong (
+          expected_state, make_slot_state (pending, kNoSlot, generation (state)),
+          std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+          if (playing_.load ())
+            on_playback_end (time_nfo.buffer_offset_ + *switch_offset);
+
+          playing_.store (true);
+          clip_launch_timeline_position_ =
+            time_nfo.transport_position_ + *switch_offset;
+          internal_clip_buffer_position_.store (units::samples (0));
+
+          render_slot<ContentT> (
+            pending, time_nfo, *switch_offset, block_length - *switch_offset,
+            render_chunk, on_playback_end);
+        }
+      else
+        {
+          // The UI thread took the queued clip back: keep playing what is
+          // played now
+          render_slot<ContentT> (
+            current_slot (expected_state), time_nfo, *switch_offset,
+            block_length - *switch_offset, render_chunk, on_playback_end);
+        }
+    }
+
+  last_seen_timeline_position_ = time_nfo.transport_position_;
+}
+
+void
+ClipPlaybackDataProvider::process_midi_events (
+  const dsp::graph::ProcessBlockInfo &time_nfo,
+  dsp::MidiEventBuffer               &output_buffer) noexcept
+{
+  process_block<MidiContent> (
+    time_nfo,
+    [&] (
+      const MidiContent &midi_events,
+      units::sample_t    current_internal_buffer_offset,
+      units::sample_t    samples_to_process_in_chunk,
+      units::sample_t    total_samples_processed,
+      units::sample_t    output_buffer_timestamp_offset) {
+      const auto chunk_end =
+        current_internal_buffer_offset + samples_to_process_in_chunk;
+      for (
+        auto it = std::ranges::lower_bound (
+          midi_events, current_internal_buffer_offset, {},
+          &dsp::SampleBasedMidiEvent::time_);
+        it != midi_events.end () && it->time_ < chunk_end; ++it)
+        {
+          // Event timestamp relative to the start of this chunk, plus the
+          // samples already rendered and the segment's output offset
+          const auto local_timestamp =
+            total_samples_processed
+            + (it->time_ - current_internal_buffer_offset)
+            + output_buffer_timestamp_offset;
+          output_buffer.push_back (
+            au::floor_as<uint32_t> (units::samples, local_timestamp),
+            it->data ());
+        }
+    },
+    [&] (units::sample_t output_timestamp) {
+      // Silence notes of the clip that stops or is replaced
+      for (const auto channel : std::views::iota (0, 16))
+        {
+          const auto ev = dsp::midi_event::make_all_notes_off (
+            static_cast<midi_byte_t> (channel), output_timestamp);
+          output_buffer.push_back (ev.time_, ev.data ());
+        }
+    });
+}
+
+void
 ClipPlaybackDataProvider::process_audio_events (
   const dsp::graph::ProcessBlockInfo &time_nfo,
   std::span<float>                    left_buffer,
   std::span<float>                    right_buffer) noexcept
 {
-  [&] () {
-    decltype (active_audio_playback_buffer_)::ScopedAccess<
-      farbot::ThreadType::realtime>
-      cache_opt{ active_audio_playback_buffer_ };
-    if (!cache_opt->has_value ())
-      {
-        playing_.store (false);
+  process_block<AudioContent> (
+    time_nfo,
+    [&] (
+      const AudioContent &audio_buffer,
+      units::sample_t     current_internal_buffer_offset,
+      units::sample_t     samples_to_process_in_chunk,
+      units::sample_t     total_samples_processed,
+      units::sample_t     output_buffer_timestamp_offset) {
+      // Calculate the number of samples to copy
+      const auto samples_to_copy = std::min (
+        samples_to_process_in_chunk.as<int64_t> (units::samples),
+        units::samples (audio_buffer.getNumSamples ())
+          - current_internal_buffer_offset.as<int64_t> (units::samples));
+
+      if (samples_to_copy <= units::samples (0))
         return;
-      }
 
-    const auto &cache = cache_opt->value ();
-    const auto &audio_buffer = cache.audio_buffer_;
-    if (audio_buffer.getNumSamples () == 0)
-      {
+      const auto output_start_idx_samples =
+        (total_samples_processed + output_buffer_timestamp_offset)
+          .in<size_t> (units::samples);
+      if (output_start_idx_samples >= left_buffer.size ())
         return;
-      }
 
-    const auto clip_loop_end_samples = tempo_map_.tick_to_samples_rounded (
-      dsp::TimelineTick{ cache.end_position_ });
+      const auto actual_samples_to_copy = std::min (
+        samples_to_copy,
+        static_cast<units::sample_t> (
+          units::samples (left_buffer.size () - output_start_idx_samples)));
 
-    if constexpr (CLIP_LAUNCHER_EVENT_PROVIDER_DEBUG)
-      z_debug (
-        "Audio clip loop end: {} ({})", clip_loop_end_samples,
-        cache.end_position_);
+      // Copy left channel
+      utils::float_ranges::add2 (
+        left_buffer.subspan (
+          output_start_idx_samples, actual_samples_to_copy.in (units::samples)),
+        { audio_buffer.getReadPointer (
+            0, current_internal_buffer_offset.in<int> (units::samples)),
+          actual_samples_to_copy.in<size_t> (units::samples) });
 
-    // Update playback position based on timeline changes
-    update_playback_position (time_nfo, clip_loop_end_samples);
-
-    // Handle quantization and get start position and samples to process
-    const auto range = handle_quantization_and_start (
-      time_nfo, clip_loop_end_samples, cache.quantize_opt_);
-
-    if (range.samples_to_process == units::samples (0))
-      {
-        // Not time to start yet
-        return;
-      }
-
-    // Process audio chunks with looping using the common template method
-    process_chunks_with_looping (
-      range.internal_buffer_start_offset, range.samples_to_process,
-      clip_loop_end_samples, range.output_buffer_timestamp_offset,
-      [&] (
-        units::sample_t current_internal_buffer_offset,
-        units::sample_t samples_to_process_in_chunk,
-        units::sample_t total_samples_processed,
-        units::sample_t output_buffer_timestamp_offset) {
-        // Calculate the number of samples to copy
-        const auto samples_to_copy = std::min (
-          samples_to_process_in_chunk.as<int64_t> (units::samples),
-          units::samples (audio_buffer.getNumSamples ())
-            - current_internal_buffer_offset.as<int64_t> (units::samples));
-
-        if (samples_to_copy > units::samples (0))
-          {
-            // Copy audio data to output buffers
-            const auto output_start_idx =
-              total_samples_processed + output_buffer_timestamp_offset;
-
-            const auto output_start_idx_samples =
-              output_start_idx.in<size_t> (units::samples);
-            if (output_start_idx_samples < left_buffer.size ())
-              {
-                const auto actual_samples_to_copy = std::min (
-                  samples_to_copy,
-                  static_cast<units::sample_t> (units::samples (
-                    left_buffer.size () - output_start_idx_samples)));
-
-                // Copy left channel
-                utils::float_ranges::add2 (
-                  left_buffer.subspan (
-                    output_start_idx_samples,
-                    actual_samples_to_copy.in (units::samples)),
-                  { audio_buffer.getReadPointer (
-                      0, current_internal_buffer_offset.in<int> (units::samples)),
-                    actual_samples_to_copy.in<size_t> (units::samples) });
-
-                // Copy right channel
-                if (
-                  audio_buffer.getNumChannels () > 1
-                  && right_buffer.size () > output_start_idx_samples)
-                  {
-                    utils::float_ranges::add2 (
-                      right_buffer.subspan (
-                        output_start_idx_samples,
-                        actual_samples_to_copy.in (units::samples)),
-                      { audio_buffer.getReadPointer (
-                          1, current_internal_buffer_offset.in<int> (
-                               units::samples)),
-                        actual_samples_to_copy.in<size_t> (units::samples) });
-                  }
-              }
-          }
-      });
-  }();
-
-  // Update was_playing for next iteration
-  was_playing_ = playing_.load ();
+      // Copy right channel
+      if (
+        audio_buffer.getNumChannels () > 1
+        && right_buffer.size () > output_start_idx_samples)
+        {
+          utils::float_ranges::add2 (
+            right_buffer.subspan (
+              output_start_idx_samples,
+              actual_samples_to_copy.in (units::samples)),
+            { audio_buffer.getReadPointer (
+                1, current_internal_buffer_offset.in<int> (units::samples)),
+              actual_samples_to_copy.in<size_t> (units::samples) });
+        }
+    },
+    [] (units::sample_t) {
+      // Audio needs no action when a clip stops or is replaced
+    });
 }
 }

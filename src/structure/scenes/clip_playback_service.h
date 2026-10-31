@@ -250,34 +250,46 @@ private:
   void updateClipSlotState (ClipSlot * clipSlot, ClipSlot::ClipState newState);
 
   /**
-   * @brief Start a timer to monitor playback state changes.
+   * @brief Starts polling the track processors for playback changes.
    */
-  void startPlaybackStateMonitor (
-    tracks::Track *     track,
-    ClipSlot *          clipSlot,
-    ClipSlot::ClipState targetState);
+  void startPlaybackStateMonitor ();
 
   /**
-   * @brief Check if the track processor has reached the target state.
+   * @brief Updates clip slot states from the playback state of each track's
+   * processor.
    */
   void checkPlaybackState ();
+
+  /**
+   * @brief Clip slots of a track that are playing or waiting for a
+   * playback change.
+   */
+  struct TrackClipState
+  {
+    /** Slot whose clip is playing. */
+    ClipSlot * playing_slot{};
+
+    /** Slot whose clip is queued to start. */
+    ClipSlot * queued_slot{};
+
+    /** Whether the playing clip was asked to stop. */
+    bool stop_requested{};
+  };
 
 private:
   utils::IObjectRegistry        &registry_;
   const tracks::TrackCollection &track_collection_;
 
   /**
-   * @brief Track of currently playing clips by track UUID.
+   * @brief Clip slot states by track UUID.
    */
-  std::unordered_map<tracks::Track::Uuid, ClipSlot *> playing_clips_;
+  std::unordered_map<tracks::Track::Uuid, TrackClipState> track_states_;
 
   /**
-   * @brief Timers for monitoring playback state changes.
+   * @brief Polls the track processors while any track waits for a playback
+   * change.
    */
-  std::unordered_map<
-    tracks::Track::Uuid,
-    std::tuple<utils::QObjectUniquePtr<QTimer>, ClipSlot *, ClipSlot::ClipState>>
-    playback_state_monitors_;
+  utils::QObjectUniquePtr<QTimer> playback_state_monitor_;
 };
 
 }
