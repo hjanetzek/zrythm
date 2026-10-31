@@ -19,6 +19,7 @@
 #include <QPointer>
 #include <QPromise>
 #include <QQmlEngine>
+#include <QWindow>
 
 #include "operations/builtin_operations.h"
 #include "operations/operation_dispatcher.h"
@@ -538,6 +539,10 @@ ProjectSession::ProjectSession (
 
 ProjectSession::~ProjectSession ()
 {
+  // Windows parented to the session (e.g. the project window created from
+  // QML) bind to its members, so they are destroyed before the members
+  qDeleteAll (findChildren<QWindow *> (Qt::FindDirectChildrenOnly));
+
   project_->engine ()->deactivate ();
   recording_materializer_.reset ();
 }
