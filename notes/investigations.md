@@ -223,6 +223,12 @@ Key files:
      the length, and fades at the clip boundaries. A launcher rendering
      needs a position-independent variant, and a decision on fades at
      loop wraps (probably only a short declick).
+   **MIDI fixed** (you chose MIDI loop and tempo first; audio stays open):
+   launched MIDI clips play clip start → loop end, then loop start → loop
+   end forever. `ClipRenderer::serialize_to_sequence` gained a
+   `playback_length` parameter. Found and fixed along the way: a
+   note-off exactly on the loop end was dropped (hanging notes), and on
+   every wrap the intro's note-offs at the loop start were replayed.
 6. **Tempo handling.** MIDI event times are converted with
    `tick_to_samples_rounded` at timeline ticks counted from 0, i.e. using
    the tempo at the start of the project rather than at the launch
@@ -236,6 +242,11 @@ Key files:
    tracks position (ticks instead of samples), so it fits together with
    the MIDI part of 5. Audio follows tempo only through warping, which is
    part of the audio rendering question above.
+   **MIDI fixed:** the cache stores events in ticks. The playback position
+   advances in ticks (resyncing to the transport when it moves, and
+   running freely while it is stopped), and event sample offsets come from
+   the tempo map. The slot's position indicator now uses
+   `current_playback_fraction()`, the position as the clip shows it.
 7. **Seeking before the launch point (verified by reading).**
    `update_playback_position` computes
    `(current - launch) % loop_end`. If the playhead moves before the
@@ -353,7 +364,8 @@ mapping, recording into slots, warping for launcher clips, launch modes
 5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
    (16), remove the debug notes (17)~~ (done); add scene management and
    undo (16, 22).
-6. Respect the clip loop points and tempo (5, 6).
+6. Respect the clip loop points and tempo (5, 6): ~~MIDI~~ done; audio
+   still needs a position-independent launcher rendering.
 7. Recording into slots: see
    [Recording into Clip Launcher Slots](#recording-into-clip-launcher-slots-whats-missing-2026-10-31).
    Order: the materializer's slot destination and gating, then quantized
