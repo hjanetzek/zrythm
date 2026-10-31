@@ -109,7 +109,12 @@ Key files:
    restart (verified by reading).** `playing_` stays `true` when a new
    cache is installed, so the quantization branch is skipped: the new clip
    starts immediately, at the old clip's position, and wraps at the new
-   clip's length.
+   clip's length. **Fixed:** the provider has two cache slots and an atomic
+   slot state. A launched clip waits in the idle slot, and the audio thread
+   switches to it at the quantization point, silencing MIDI notes of the
+   old clip there. A newer launch replaces a queued clip, and a stop
+   discards it. See "Switching Clips on a Track" in
+   `doc/dev/scenes_architecture.md`.
 5. **Looping ignores the clip's loop points.** The loop end is the clip
    length (`end_position_ = clip.length()`), and the loop always wraps to
    0. The clip-start, loop-start and loop-end markers are not used (see
@@ -127,7 +132,8 @@ Key files:
    `(current - launch) % loop_end`. If the playhead moves before the
    launch position, the result is negative and is used as a buffer
    offset. The tests `BackwardPlayheadMovement*` exist, but they need
-   checking for this case.
+   checking for this case. **Fixed in code** (the result is wrapped into
+   `[0, loop end)`), but there's no dedicated test yet.
 8. The playhead position is recalculated on every block, because
    `last_seen_timeline_position_` stores the block start, so it never
    equals the next block's start while rolling. This is harmless but
@@ -139,9 +145,15 @@ Key files:
    `Playing`.** `playing_clips_[track]` is overwritten and A's state is
    never reset. The new monitor also sees `playing() == true` right away
    and marks B `Playing` before its quantization point (see 4).
+   **Fixed:** the service tracks a playing and a queued slot per track. B
+   stays `PlayQueued` until the provider reports the switch, and only then
+   does A become `Stopped`. Stopping a queued clip discards it and keeps A
+   playing.
 10. **The QTimer is destroyed inside its own `timeout` handler.** The
     monitor erases its own map entry, which owns the `QObjectUniquePtr<QTimer>`.
     It should use `deleteLater()` or stop the timer and defer the cleanup.
+    **Fixed:** there's now one shared monitor timer. It also replaces the
+    `checkPlaybackState()` stub (12).
 11. Raw `ClipSlot *` and `Track *` pointers are kept in
     `playing_clips_` and in the timer lambdas. Removing a scene or track
     while a clip plays leaves them dangling. They should be UUID
@@ -213,12 +225,12 @@ mapping, recording into slots, warping for launcher clips, launch modes
 
 1. ~~Fix the quantized-start offset (2) and add a test with the boundary
    inside a block.~~ Done.
-2. Fix clip switching on a track (4 and 9): queue the new clip until the
-   quantization point, and reset the previous slot's state.
+2. ~~Fix clip switching on a track (4 and 9): queue the new clip until the
+   quantization point, and reset the previous slot's state.~~ Done.
 3. Implement quantized stop (1), sharing the boundary maths with the
    start path, and add the finer quantize values (3).
-4. Make the service robust: UUID references (11), safe timer teardown
-   (10), and reset playing slots on mode switch (12).
+4. Make the service robust: UUID references (11). ~~Safe timer teardown
+   (10) and resetting playing slots on mode switch (12)~~ are done.
 5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
    (16), remove the debug notes (17)~~ (done); add scene management and
    undo (16, 22).
