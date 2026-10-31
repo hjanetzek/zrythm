@@ -241,7 +241,13 @@ Key files:
 11. Raw `ClipSlot *` and `Track *` pointers are kept in
     `playing_clips_` and in the timer lambdas. Removing a scene or track
     while a clip plays leaves them dangling. They should be UUID
-    references.
+    references. **Fixed:** removing a scene or track deletes its slots
+    (the registry deletes an object when its last reference goes), so the
+    service now listens to each tracked slot's `destroyed` signal and
+    forgets it, stopping or cancelling its playback. Track lookups go
+    through `trackIfPresent`, because `track_ref_at_id` throws for removed
+    tracks. Track removal also triggers a state check. UUID references
+    were not used, because they would keep removed slots alive.
 12. `checkPlaybackState()` is an empty stub, and
     `cancelPendingClipOperations` resets only queued clips, not playing
     ones. **Partly fixed:** `setTrackToTimelineMode` now stops a playing
@@ -317,8 +323,8 @@ mapping, recording into slots, warping for launcher clips, launch modes
    quantization point, and reset the previous slot's state.~~ Done.
 3. ~~Implement quantized stop (1), sharing the boundary maths with the
    start path, and add the finer quantize values (3).~~ Done.
-4. Make the service robust: UUID references (11). ~~Safe timer teardown
-   (10) and resetting playing slots on mode switch (12)~~ are done.
+4. ~~Make the service robust: dangling slots and tracks (11), safe timer
+   teardown (10) and resetting playing slots on mode switch (12).~~ Done.
 5. UI: ~~wire the stop and switch buttons (14, 15), use scene names
    (16), remove the debug notes (17)~~ (done); add scene management and
    undo (16, 22).
@@ -328,6 +334,13 @@ mapping, recording into slots, warping for launcher clips, launch modes
    Order: the materializer's slot destination and gating, then quantized
    start/stop and finishing in the service, then the UI, then loops,
    monitoring and MIDI specifics.
+8. (Later) **Launch at the end of the playing clip:** a quantize option
+   that switches when the track's playing clip reaches its loop end.
+   The provider knows the loop length and the current position, so the
+   offset is `loop_end - position`, and the queued-switch mechanism does
+   the rest; the same option would also stop at the clip end. If nothing
+   is playing, fall back to the next bar. Once 5 is done, it follows the
+   clip's loop markers.
 
 ---
 
