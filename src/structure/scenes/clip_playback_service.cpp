@@ -105,6 +105,23 @@ ClipPlaybackService::launchClip (
 }
 
 void
+ClipPlaybackService::launch_clip_aligned (
+  tracks::Track * track,
+  ClipSlot *      clipSlot,
+  units::sample_t anchor_position)
+{
+  if (track == nullptr || clipSlot == nullptr || clipSlot->clip () == nullptr)
+    {
+      z_warning ("Invalid track or clip slot provided to launch_clip_aligned");
+      return;
+    }
+
+  scheduleClipLaunch (
+    track, clipSlot, structure::tracks::ClipQuantizeOption::Immediate,
+    anchor_position);
+}
+
+void
 ClipPlaybackService::stopClip (
   tracks::Track *                       track,
   ClipSlot *                            clipSlot,
@@ -342,7 +359,8 @@ void
 ClipPlaybackService::scheduleClipLaunch (
   tracks::Track *                       track,
   ClipSlot *                            clipSlot,
-  structure::tracks::ClipQuantizeOption quantize)
+  structure::tracks::ClipQuantizeOption quantize,
+  std::optional<units::sample_t>        anchor_position)
 {
   if ((track == nullptr) || (clipSlot == nullptr))
     return;
@@ -386,11 +404,11 @@ ClipPlaybackService::scheduleClipLaunch (
   // The provider handles quantization internally
   if (auto * midi_clip = dynamic_cast<arrangement::MidiClip *> (clip))
     {
-      generateClipEvents (track, *midi_clip, quantize);
+      generateClipEvents (track, *midi_clip, quantize, anchor_position);
     }
   else if (auto * audio_clip = dynamic_cast<arrangement::AudioClip *> (clip))
     {
-      generateClipEvents (track, *audio_clip, quantize);
+      generateClipEvents (track, *audio_clip, quantize, anchor_position);
     }
 
   // Start monitoring for the actual playback state change

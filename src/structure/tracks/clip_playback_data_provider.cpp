@@ -91,7 +91,8 @@ ClipPlaybackDataProvider::cancel_pending_launch ()
 void
 ClipPlaybackDataProvider::generate_midi_events (
   const arrangement::MidiClip          &midi_clip,
-  structure::tracks::ClipQuantizeOption quantize_option)
+  structure::tracks::ClipQuantizeOption quantize_option,
+  std::optional<units::sample_t>        anchor_position)
 {
   // The intro runs from the clip start to the first loop end; one full loop
   // follows it, also when the clip start lies after the loop start
@@ -133,13 +134,15 @@ ClipPlaybackDataProvider::generate_midi_events (
     PlaybackCache{
       .content_ = std::move (content),
       .quantize_opt_ = quantize_option,
-      .end_position_ = units::ticks (midi_clip.length ()->ticks ()) });
+      .end_position_ = units::ticks (midi_clip.length ()->ticks ()),
+      .anchor_position_ = anchor_position });
 }
 
 void
 ClipPlaybackDataProvider::generate_audio_events (
   const arrangement::AudioClip         &audio_clip,
-  structure::tracks::ClipQuantizeOption quantize_option)
+  structure::tracks::ClipQuantizeOption quantize_option,
+  std::optional<units::sample_t>        anchor_position)
 {
   // Serialize clip
   juce::AudioSampleBuffer audio_buffer;
@@ -149,7 +152,8 @@ ClipPlaybackDataProvider::generate_audio_events (
     PlaybackCache{
       .content_ = std::move (audio_buffer),
       .quantize_opt_ = quantize_option,
-      .end_position_ = units::ticks (audio_clip.length ()->ticks ()) });
+      .end_position_ = units::ticks (audio_clip.length ()->ticks ()),
+      .anchor_position_ = anchor_position });
 }
 
 void
@@ -232,11 +236,20 @@ ClipPlaybackDataProvider::process_chunks_with_looping (
 void
 ClipPlaybackDataProvider::update_playback_position (
   const dsp::graph::ProcessBlockInfo &time_nfo,
+  units::sample_t                     block_offset,
   units::sample_t                     clip_loop_end_samples)
 {
-  const auto current_timeline_position = time_nfo.transport_position_;
-  if (current_timeline_position == last_seen_timeline_position_)
+  // A clip that was already playing at the block start follows the
+  // transport position
+  const bool transport_moved =
+    block_offset == units::samples (0)
+    && time_nfo.transport_position_ != last_seen_timeline_position_;
+  if (!transport_moved && !resync_position_)
     return;
+  resync_position_ = false;
+
+  const auto current_timeline_position =
+    time_nfo.transport_position_ + block_offset;
 
   // Position within the clip, wrapped into [0, loop end) also when the
   // transport moved before the launch position
@@ -417,6 +430,9 @@ ClipPlaybackDataProvider::process_block (
   // Whether the queued slot holds silence (a queued stop)
   bool pending_is_stop = false;
 
+  // Position the queued clip's start is aligned to, if any
+  std::optional<units::sample_t> pending_anchor;
+
   // Where within the block the queued clip or stop takes over, if it does
   const auto switch_offset = [&] () -> std::optional<units::sample_t> {
     if (pending == kNoSlot)
@@ -428,6 +444,7 @@ ClipPlaybackDataProvider::process_block (
       return std::nullopt;
     const auto &content = (*pending_cache)->content_;
     pending_is_stop = std::holds_alternative<std::monostate> (content);
+    pending_anchor = (*pending_cache)->anchor_position_;
     if (!pending_is_stop && !std::holds_alternative<ContentT> (content))
       return std::nullopt;
     return quantization_offset_in_block (
@@ -455,14 +472,15 @@ ClipPlaybackDataProvider::process_block (
           playing_.store (!pending_is_stop);
           if (!pending_is_stop)
             {
-              clip_launch_timeline_position_ =
-                time_nfo.transport_position_ + *switch_offset;
+              clip_launch_timeline_position_ = pending_anchor.value_or (
+                time_nfo.transport_position_ + *switch_offset);
               clip_launch_timeline_tick_ =
                 tempo_map_.samples_to_tick (clip_launch_timeline_position_)
                   .asQuantity ();
               internal_clip_buffer_position_.store (units::samples (0));
               midi_playback_tick_ = units::ticks (0.0);
               playback_fraction_.store (0.0);
+              resync_position_ = pending_anchor.has_value ();
 
               render_slot<ContentT> (
                 pending, time_nfo, *switch_offset,
@@ -502,12 +520,15 @@ ClipPlaybackDataProvider::render_midi_segment (
     - segment_start_tick;
 
   // A clip that was already playing at the block start follows the
-  // transport position
+  // transport position; an aligned launch starts at its distance from the
+  // anchor
   if (
-    block_offset == units::samples (0)
-    && time_nfo.transport_position_ != last_seen_timeline_position_)
+    (block_offset == units::samples (0)
+     && time_nfo.transport_position_ != last_seen_timeline_position_)
+    || resync_position_)
     {
       midi_playback_tick_ = segment_start_tick - clip_launch_timeline_tick_;
+      resync_position_ = false;
     }
 
   // Position in the contents for a playback position: the intro and the
@@ -677,10 +698,7 @@ ClipPlaybackDataProvider::process_audio_events (
       if (clip_loop_end_samples <= units::samples (0))
         return;
 
-      // A clip that was already playing at the block start follows the
-      // transport position
-      if (block_offset == units::samples (0))
-        update_playback_position (time_nfo, clip_loop_end_samples);
+      update_playback_position (time_nfo, block_offset, clip_loop_end_samples);
 
       process_chunks_with_looping (
         internal_clip_buffer_position_.load (), length, clip_loop_end_samples,

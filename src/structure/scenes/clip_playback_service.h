@@ -51,6 +51,18 @@ public:
       structure::tracks::ClipQuantizeOption::NextBar);
 
   /**
+   * @brief Launches a clip right away, playing as if it had started at
+   * @p anchor_position (which may lie in the past).
+   *
+   * Used to continue seamlessly into a clip whose start lies before the
+   * moment it can be launched, e.g. a clip that was just recorded.
+   */
+  void launch_clip_aligned (
+    tracks::Track * track,
+    ClipSlot *      clipSlot,
+    units::sample_t anchor_position);
+
+  /**
    * @brief Stop a clip with quantization.
    *
    * @param track The track containing the playing clip
@@ -205,7 +217,8 @@ private:
   void scheduleClipLaunch (
     tracks::Track *                       track,
     ClipSlot *                            clipSlot,
-    structure::tracks::ClipQuantizeOption quantize);
+    structure::tracks::ClipQuantizeOption quantize,
+    std::optional<units::sample_t>        anchor_position = std::nullopt);
 
   /**
    * @brief Schedule a clip stop at the appropriate quantized position.
@@ -222,7 +235,8 @@ private:
   void generateClipEvents (
     tracks::Track *                       track,
     const ClipT                          &clip,
-    structure::tracks::ClipQuantizeOption quantize)
+    structure::tracks::ClipQuantizeOption quantize,
+    std::optional<units::sample_t>        anchor_position)
   {
     if (track == nullptr)
       return;
@@ -235,12 +249,12 @@ private:
     if constexpr (std::is_same_v<ClipT, arrangement::MidiClip>)
       {
         processor->clip_playback_data_provider ().generate_midi_events (
-          clip, quantize);
+          clip, quantize, anchor_position);
       }
     else if constexpr (std::is_same_v<ClipT, arrangement::AudioClip>)
       {
         processor->clip_playback_data_provider ().generate_audio_events (
-          clip, quantize);
+          clip, quantize, anchor_position);
       }
   }
 

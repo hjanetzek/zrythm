@@ -61,6 +61,14 @@ class ClipPlaybackDataProvider final
      * @brief End position to loop at (audio clips).
      */
     units::precise_tick_t end_position_;
+
+    /**
+     * @brief Timeline position the clip's start is aligned to, if any.
+     *
+     * When set, playback begins at the position inside the clip that
+     * corresponds to the playhead's distance from this position.
+     */
+    std::optional<units::sample_t> anchor_position_;
   };
 
   using CacheSlot = farbot::RealtimeObject<
@@ -80,11 +88,16 @@ public:
    * its loop start to its loop end; its length is not used. Event times
    * follow the tempo map from the launch position on.
    *
+   * With @p anchor_position, the clip plays as if it had started at that
+   * timeline position (which may lie in the past): playback begins inside
+   * the clip at the playhead's distance from it.
+   *
    * Must be called from the UI thread.
    */
   void generate_midi_events (
     const arrangement::MidiClip          &midi_clip,
-    structure::tracks::ClipQuantizeOption quantize_option);
+    structure::tracks::ClipQuantizeOption quantize_option,
+    std::optional<units::sample_t>        anchor_position = std::nullopt);
 
   /**
    * @brief Queues an audio clip to start playing at its quantization point.
@@ -93,7 +106,8 @@ public:
    */
   void generate_audio_events (
     const arrangement::AudioClip         &audio_clip,
-    structure::tracks::ClipQuantizeOption quantize_option);
+    structure::tracks::ClipQuantizeOption quantize_option,
+    std::optional<units::sample_t>        anchor_position = std::nullopt);
 
   /**
    * @brief Stops playback at the quantization point and discards a queued
@@ -200,11 +214,13 @@ private:
     structure::tracks::ClipQuantizeOption quantize_opt) const;
 
   /**
-   * @brief Recalculates the position within the clip after the transport
-   * position changed.
+   * @brief Recalculates the position within the clip for the segment
+   * starting @p block_offset samples into the block, if the transport
+   * position changed or a resync is pending.
    */
   void update_playback_position (
     const dsp::graph::ProcessBlockInfo &time_nfo,
+    units::sample_t                     block_offset,
     units::sample_t                     clip_loop_end_samples);
 
   /**
@@ -313,6 +329,13 @@ private:
    * @brief Ticks played since the launch (MIDI clips, audio thread only).
    */
   units::precise_tick_t midi_playback_tick_;
+
+  /**
+   * @brief Whether the position inside the clip must be recalculated from
+   * the launch position before rendering (after an aligned launch; audio
+   * thread only).
+   */
+  bool resync_position_{};
 
   /**
    * @brief Position within the played contents, from 0 to 1 (see

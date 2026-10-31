@@ -655,6 +655,82 @@ TEST_F (ClipPlaybackDataProviderLoopTest, EventTimesFollowTempoChanges)
   EXPECT_EQ (samples_at (1920.0) - samples_at (960.0), 2 * samples_at (960.0));
 }
 
+TEST_F (ClipPlaybackDataProviderLoopTest, AlignedLaunchStartsInsideTheClip)
+{
+  auto * clip = create_midi_clip_with_tick_notes (
+    960.0,
+    {
+      { 60, 0.0,   100.0 },
+      { 62, 480.0, 100.0 },
+  });
+
+  // Launched at tick 240 but aligned to tick 0: the note at tick 0 has
+  // passed, the one at tick 480 plays where it falls on the timeline
+  provider_->generate_midi_events (
+    *clip, structure::tracks::ClipQuantizeOption::Immediate, units::samples (0));
+  const auto             block_start = samples_at (240.0);
+  std::vector<TimedNote> notes;
+  for (int64_t start = block_start; start < samples_at (960.0); start += 256)
+    {
+      auto output_buffer = dsp::MidiEventBuffer::make_reserved ();
+      provider_->process_midi_events (
+        create_time_info (static_cast<uint64_t> (start), 0, 256), output_buffer);
+      for (const auto &event : output_buffer)
+        {
+          if (utils::midi::midi_is_note_on (event.data ()))
+            {
+              notes.push_back (
+                TimedNote{
+                  .pitch = utils::midi::midi_get_note_number (event.data ()),
+                  .sample = start + event.time ().in<int64_t> (units::samples),
+                  .on = true });
+            }
+        }
+    }
+  // Notes up to the loop end at tick 960
+  std::erase_if (notes, [&] (const TimedNote &note) {
+    return note.sample >= samples_at (960.0);
+  });
+  expect_notes_near (
+    notes,
+    {
+      { 62, samples_at (480.0), true }
+  });
+  EXPECT_TRUE (provider_->playing ());
+}
+
+TEST_F (ClipPlaybackDataProviderTest, AudioAlignedLaunchStartsInsideTheClip)
+{
+  auto * clip = create_simple_audio_clip ();
+
+  // Reference: launched at sample 0, rendering samples 100..356
+  ClipPlaybackDataProvider reference_provider (*tempo_map_);
+  reference_provider.generate_audio_events (
+    *clip, structure::tracks::ClipQuantizeOption::Immediate);
+  std::vector<float> scratch_left (100, 0.0f);
+  std::vector<float> scratch_right (100, 0.0f);
+  reference_provider.process_audio_events (
+    create_time_info (0, 0, 100), scratch_left, scratch_right);
+  std::vector<float> reference_left (256, 0.0f);
+  std::vector<float> reference_right (256, 0.0f);
+  reference_provider.process_audio_events (
+    create_time_info (100, 0, 256), reference_left, reference_right);
+
+  // Launched at sample 100, aligned to sample 0
+  provider_->generate_audio_events (
+    *clip, structure::tracks::ClipQuantizeOption::Immediate, units::samples (0));
+  std::vector<float> output_left (256, 0.0f);
+  std::vector<float> output_right (256, 0.0f);
+  provider_->process_audio_events (
+    create_time_info (100, 0, 256), output_left, output_right);
+
+  for (const auto i : std::views::iota (0uz, output_left.size ()))
+    {
+      EXPECT_FLOAT_EQ (output_left[i], reference_left[i]) << "at sample " << i;
+      EXPECT_FLOAT_EQ (output_right[i], reference_right[i]) << "at sample " << i;
+    }
+}
+
 TEST_F (ClipPlaybackDataProviderLoopTest, NoteEndingAtLoopEndIsReleasedEveryLoop)
 {
   // A note lasting until the loop end

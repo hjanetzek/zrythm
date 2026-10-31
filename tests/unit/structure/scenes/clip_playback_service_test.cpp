@@ -371,6 +371,28 @@ TEST_F (ClipPlaybackServiceTest, CancellingQuantizedStopKeepsClipPlaying)
     track->get_track_processor ()->clip_playback_data_provider ().playing ());
 }
 
+TEST_F (ClipPlaybackServiceTest, AlignedLaunchPlaysFromTheMatchingPosition)
+{
+  auto * track = track_collection_->get_track_ref_at_index (0).get ();
+  auto   clipSlot = utils::make_qobject_unique<ClipSlot> (*registry_);
+  clipSlot->setClip (create_midi_clip ());
+
+  // The clip is 100 ticks long; launched at sample 1000 but aligned to 0
+  playback_service_->launch_clip_aligned (
+    track, clipSlot.get (), units::samples (0));
+  EXPECT_EQ (clipSlot->state (), ClipSlot::ClipState::PlayQueued);
+  process_block (1000);
+  ASSERT_TRUE (wait_for_state (clipSlot.get (), ClipSlot::ClipState::Playing));
+
+  const auto &provider =
+    track->get_track_processor ()->clip_playback_data_provider ();
+  const auto played_ticks =
+    tempo_map_->samples_to_tick (units::samples (1000 + 256)).asDouble ();
+  EXPECT_NEAR (
+    provider.current_playback_fraction (),
+    std::fmod (played_ticks, 100.0) / 100.0, 1e-6);
+}
+
 TEST_F (ClipPlaybackServiceTest, LaunchingClipDiscardsEarlierQueuedClip)
 {
   auto * track = track_collection_->get_track_ref_at_index (0).get ();
