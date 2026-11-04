@@ -4,6 +4,7 @@ maintainer="Bart Ribbers <bribbers@disroot.org>"
 pkgname=qt6-qtbase
 pkgver=6.12.0
 pkgrel=0
+# zrythm: local build of aports MR !107047, see ../README.md
 pkgdesc="A cross-platform application and UI framework"
 url="https://qt.io/"
 arch="all"
@@ -60,7 +61,6 @@ makedepends="$depends_dev
 	xmlstarlet
 	"
 subpackages="
-	$pkgname-dbg
 	$pkgname-private-dev:private_dev
 	$pkgname-dev
 	$pkgname-doc
@@ -97,13 +97,13 @@ build() {
 		;;
 	esac
 
-	# -g1: significantly reduce debug symbol size
-	export CFLAGS="$CFLAGS -g1 -flto=auto"
-	export CXXFLAGS="$CXXFLAGS -g1 -flto=auto"
+	# zrythm: built without LTO and without debug info (Release, no -dbg
+	# subpackage), to keep the build chroot small and the build fast under
+	# pmbootstrap (LTO code generation would run under qemu).
 	cmake -B build -G Ninja -Wno-dev \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=/usr \
-		-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+		-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
 		-DINSTALL_BINDIR=lib/qt6/bin \
 		-DINSTALL_PUBLICBINDIR=bin \
 		-DINSTALL_DOCDIR=share/doc/qt6 \

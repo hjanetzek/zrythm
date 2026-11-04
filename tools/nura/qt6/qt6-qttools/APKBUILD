@@ -4,7 +4,7 @@ maintainer="Bart Ribbers <bribbers@disroot.org>"
 pkgname=qt6-qttools
 pkgver=6.12.0
 pkgrel=0
-_llvmver=21
+# zrythm: local build of aports MR !107047, see ../README.md
 pkgdesc="A cross-platform application and UI framework (Development Tools, QtHelp)"
 url="https://qt.io/"
 arch="all"
@@ -12,15 +12,9 @@ license="LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1
 depends_dev="$pkgname=$pkgver-r$pkgrel
 	vulkan-headers
 	"
-# -static not used but needed for cmake
+# zrythm: without clang/llvm (no qdoc, no clang-based lupdate C++ parser)
 makedepends="$depends_dev
-	clang$_llvmver-dev
-	clang$_llvmver-extra-tools
-	clang$_llvmver-static
 	cmake
-	llvm$_llvmver-dev
-	llvm$_llvmver-gtest
-	llvm$_llvmver-static
 	perl
 	qt6-qtbase-dev
 	qt6-qtbase-private-dev
@@ -48,23 +42,16 @@ source="https://download.qt.io/$_rel/qt/${pkgver%.*}/${pkgver/_/-}/submodules/qt
 options="!check" # Tests aren't found
 
 build() {
-	case "$CTARGET_ARCH" in
-		armhf) ;;
-		*)
-			local feature_qdoc="-DQT_FEATURE_qdoc=ON"
-			;;
-	esac
-
-	# their cmake uses the clang_include_dirs only, but our llvm include dirs
-	# are in another castle
-	export CXXFLAGS="$CXXFLAGS -flto=auto -U_FORTIFY_SOURCE -I/usr/include/llvm$_llvmver"
-	export CFLAGS="$CFLAGS -flto=auto"
-	export PATH="/usr/lib/llvm$_llvmver/bin:$PATH"
+	# zrythm: built without LTO and without debug info (Release, no -dbg
+	# subpackage), to keep the build chroot small and the build fast under
+	# pmbootstrap (LTO code generation would run under qemu).
 	cmake -B build -G Ninja \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DINSTALL_PUBLICBINDIR=usr/bin \
-		$feature_qdoc
+		-DQT_FEATURE_qdoc=OFF \
+		-DQT_FEATURE_clang=OFF \
+		-DQT_FEATURE_clangcpp=OFF
 	cmake --build build
 }
 

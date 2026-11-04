@@ -4,6 +4,7 @@ maintainer="Bart Ribbers <bribbers@disroot.org>"
 pkgname=qt6-qtlanguageserver
 pkgver=6.12.0
 pkgrel=0
+# zrythm: local build of aports MR !107047, see ../README.md
 pkgdesc="Qt implementation of the Language Server Protocol"
 url="https://qt.io/"
 arch="all"
@@ -28,10 +29,11 @@ esac
 source="https://download.qt.io/$_rel/qt/${pkgver%.*}/${pkgver/_/-}/submodules/qtlanguageserver-everywhere-src-${pkgver/_/-}.tar.xz"
 
 build() {
-	export CFLAGS="$CFLAGS -flto=auto"
-	export CXXFLAGS="$CXXFLAGS -flto=auto"
+	# zrythm: built without LTO and without debug info (Release, no -dbg
+	# subpackage), to keep the build chroot small and the build fast under
+	# pmbootstrap (LTO code generation would run under qemu).
 	cmake -B build -G Ninja \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=/usr
 	cmake --build build
 }
