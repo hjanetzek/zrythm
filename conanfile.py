@@ -28,14 +28,18 @@ class Zrythm(ConanFile):
             "memory",
         ],
         "use_mold": [True, False],
+        # Use the Qt installed on the system (found by CMake's find_package)
+        # instead of building it with Conan
+        "system_qt": [True, False],
     }
-    default_options = {"sanitizer": "none", "use_mold": False}
+    default_options = {"sanitizer": "none", "use_mold": False, "system_qt": False}
 
     def set_version(self):
         self.version = load(self, "VERSION.txt").lstrip("v").rstrip()
 
     def requirements(self):
-        self.requires("qt/[>=6.12.0]")
+        if not self.options.system_qt:
+            self.requires("qt/[>=6.12.0]")
         self.requires("magic_enum/0.9.7")
         self.requires("fmt/[~12]")
         self.requires("spdlog/[~1.17]")
@@ -275,13 +279,17 @@ class Zrythm(ConanFile):
 
             # Consumed by the "Qt" (qt-cpp) VS Code extension to locate the Conan-built Qt
             # for design tools (Qt Creator integration, qmlls language server, etc.).
-            qt_pkg = self.dependencies["qt"].package_folder
-            qt_vendor = {
-                "qt-cpp": {
-                    "VSCODE_QT_INSTALLATION": qt_pkg,
-                    "VSCODE_QT_QTPATHS_EXE": os.path.join(qt_pkg, "bin", "qtpaths"),
+            qt_vendor = {}
+            if not self.options.system_qt:
+                qt_pkg = self.dependencies["qt"].package_folder
+                qt_vendor = {
+                    "qt-cpp": {
+                        "VSCODE_QT_INSTALLATION": qt_pkg,
+                        "VSCODE_QT_QTPATHS_EXE": os.path.join(
+                            qt_pkg, "bin", "qtpaths"
+                        ),
+                    }
                 }
-            }
 
             user_presets = {
                 "version": 5,
