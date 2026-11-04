@@ -12,13 +12,16 @@ license="LGPL-2.1-only AND LGPL-3.0-only AND GPL-3.0-only AND Qt-GPL-exception-1
 depends_dev="$pkgname=$pkgver-r$pkgrel
 	vulkan-headers
 	"
-# zrythm: without clang/llvm (no qdoc, no clang-based lupdate C++ parser)
-makedepends="$depends_dev
+# zrythm: without clang/llvm (no qdoc, no clang-based lupdate C++ parser);
+# without $depends_dev, which names this package itself: abuild leaves it
+# out, but pmbootstrap would try to install it before it is built
+makedepends="
 	cmake
 	perl
 	qt6-qtbase-dev
 	qt6-qtbase-private-dev
 	samurai
+	vulkan-headers
 	"
 case "$CARCH" in
 	armhf) ;;

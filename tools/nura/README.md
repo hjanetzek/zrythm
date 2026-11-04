@@ -35,7 +35,9 @@ Notes on `qt6/`:
   pmbootstrap, LTO code generation runs under qemu, and debug info and the llvm static libraries
   take several GB in the build chroot.
 - The versions (6.12.0) are higher than aports' 6.11, so pmbootstrap builds these instead of
-  using Alpine's binary packages. Once aports has Qt 6.12, drop the copies of the MR's recipes;
+  using Alpine's binary packages. `qt6-qttools` and `qt6-qtwayland` also leave their own
+  packages (named in `$depends_dev`) out of `makedepends`: abuild skips them, pmbootstrap would
+  install them, or aports' older versions, before the build. Once aports has Qt 6.12, drop the copies of the MR's recipes;
   `qt6-qtcanvaspainter` and `qt6-qttasktree` stay until aports packages them.
 
 Notes on `zrythm`:
@@ -90,11 +92,15 @@ audio backend **PipeWire**).
 
 ## Build and install
 
-Build Qt and the libraries once (pmbootstrap builds the dependencies among them in order), then
-Zrythm and the kiosk packages, and switch the UI to Zrythm:
+Build Qt and the libraries once, then Zrythm and the kiosk packages, and switch the UI to
+Zrythm. Qt goes in three stages: the recipes ask for the other Qt modules without a version, and
+aports' 6.11 packages satisfy that, so pmbootstrap would not build ours first. Once a stage's 6.12
+packages are in the local repository, apk prefers them.
 
 ```sh
-pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qtcanvaspainter qt6-qttasktree qt6-qttools qt6-qtwayland
+pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qtbase qt6-qtshadertools qt6-qtsvg qt6-qtlanguageserver qt6-qttasktree
+pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qtdeclarative
+pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qttools qt6-qtwayland qt6-qtcanvaspainter
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 au debug-assert gsl-lite magic-enum mpmcqueue nlohmann-json-schema-validator scnlib type-safe
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 --src="$PWD" zrythm
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 postmarketos-ui-zrythm zrythm-quirks-google-kukui

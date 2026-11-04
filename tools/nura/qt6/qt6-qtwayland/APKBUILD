@@ -3,7 +3,7 @@
 maintainer="Bart Ribbers <bribbers@disroot.org>"
 pkgname=qt6-qtwayland
 pkgver=6.12.0
-pkgrel=0
+pkgrel=1
 # zrythm: local build of aports MR !107047, see ../README.md
 pkgdesc="Provides APIs for Wayland"
 url="https://qt.io/"
@@ -13,7 +13,10 @@ depends_dev="
 	$pkgname-private-dev
 	vulkan-headers
 	"
-makedepends="$depends_dev
+# zrythm: without $depends_dev, which names this package's own -private-dev:
+# abuild leaves it out, but pmbootstrap would install aports' older one
+makedepends="
+	vulkan-headers
 	cmake
 	perl
 	qt6-qtbase-dev
