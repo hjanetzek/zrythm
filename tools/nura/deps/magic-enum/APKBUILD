@@ -1,0 +1,33 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=magic-enum
+pkgver=0.9.7
+pkgrel=0
+pkgdesc="Static reflection for enums in modern C++"
+url="https://github.com/Neargye/magic_enum"
+arch="noarch"
+license="MIT"
+makedepends="cmake samurai"
+options="!check" # header-only; the tests need extra dependencies
+source="magic_enum-$pkgver.tar.gz::https://github.com/Neargye/magic_enum/archive/refs/tags/v$pkgver.tar.gz"
+builddir="$srcdir/magic_enum-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+		-DMAGIC_ENUM_OPT_BUILD_EXAMPLES=OFF \
+		-DMAGIC_ENUM_OPT_BUILD_TESTS=OFF \
+		-DMAGIC_ENUM_OPT_INSTALL=ON
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+8b61c621ff2a6981b4ff89f7df577091ffc9382d443c061db612fb61822dbf6ef8aba69ea35d1c435dcffbd7434cb4ccc5d12bbe2deba1cf0a5316c979ee6a4b  magic_enum-0.9.7.tar.gz
+"

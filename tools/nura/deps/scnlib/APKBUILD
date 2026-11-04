@@ -1,0 +1,45 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=scnlib
+pkgver=4.0.1
+pkgrel=0
+pkgdesc="scanf for modern C++"
+url="https://scnlib.dev/"
+arch="all"
+license="Apache-2.0"
+makedepends="cmake samurai"
+subpackages="$pkgname-dev"
+options="!check" # the tests fetch googletest
+# fast_float: the version scnlib pins (cmake/dependencies.cmake), compiled into
+# the library; scnlib 4.0.1 does not build against fast_float 8 (aports)
+_ffver=6.1.6
+source="scnlib-$pkgver.tar.gz::https://github.com/eliaskosunen/scnlib/archive/refs/tags/v$pkgver.tar.gz
+	fast_float-$_ffver.tar.gz::https://github.com/fastfloat/fast_float/archive/refs/tags/v$_ffver.tar.gz
+	"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DBUILD_SHARED_LIBS=ON \
+		-DSCN_TESTS=OFF \
+		-DSCN_EXAMPLES=OFF \
+		-DSCN_BENCHMARKS=OFF \
+		-DSCN_BENCHMARKS_BUILDTIME=OFF \
+		-DSCN_BENCHMARKS_BINARYSIZE=OFF \
+		-DSCN_DOCS=OFF \
+		-DSCN_INSTALL=ON \
+		-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+		-DFETCHCONTENT_SOURCE_DIR_FAST_FLOAT="$srcdir"/fast_float-$_ffver
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+db14d71da3c1ecb849f00ac1e334f39c532592230e950aa1009ff00ba56670cb71e33ca457fd4ac66595ff43f0dca0e42d45f672848b9cde3cba80f19ef8693f  scnlib-4.0.1.tar.gz
+d2dbd2537f433329a76539c061238af080125526b7822fbfdf0f70ac0a6800114848b9be0fdf9c51dbb22211af3bdcf9829ed9cc4a47fd28ecdeecf7c5d4b663  fast_float-6.1.6.tar.gz
+"

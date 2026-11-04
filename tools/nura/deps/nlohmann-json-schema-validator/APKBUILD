@@ -1,0 +1,36 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=nlohmann-json-schema-validator
+pkgver=2.4.1
+pkgrel=0
+pkgdesc="JSON schema validator for JSON for Modern C++"
+url="https://github.com/pboettch/json-schema-validator"
+arch="all"
+license="MIT"
+depends_dev="nlohmann-json"
+makedepends="$depends_dev cmake samurai"
+subpackages="$pkgname-dev"
+options="!check" # the tests download the JSON schema test suite
+source="json-schema-validator-$pkgver.tar.gz::https://github.com/pboettch/json-schema-validator/archive/refs/tags/$pkgver.tar.gz"
+builddir="$srcdir/json-schema-validator-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DJSON_VALIDATOR_SHARED_LIBS=ON \
+		-DJSON_VALIDATOR_INSTALL=ON \
+		-DJSON_VALIDATOR_BUILD_TESTS=OFF \
+		-DJSON_VALIDATOR_BUILD_EXAMPLES=OFF \
+		-DFETCHCONTENT_FULLY_DISCONNECTED=ON
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+2693df0a7c60818d7df19e93f5ff39ce88e250455fc5aa92c41b23c9d12e764218fafe903504ea4caae8f355b6c390e962a0c031a1ba2450bfc5659b6ff83d9a  json-schema-validator-2.4.1.tar.gz
+"

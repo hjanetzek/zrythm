@@ -1,0 +1,31 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=debug-assert
+pkgver=1.3.3
+pkgrel=0
+pkgdesc="Simple, flexible and modular assertion macro"
+url="https://github.com/foonathan/debug_assert"
+arch="noarch"
+license="Zlib"
+makedepends="cmake samurai"
+options="!check" # header-only; the tests need extra dependencies
+source="debug_assert-$pkgver.tar.gz::https://github.com/foonathan/debug_assert/archive/refs/tags/v$pkgver.tar.gz"
+builddir="$srcdir/debug_assert-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+		-DDEBUG_ASSERT_INSTALL=ON
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+9ef6ebcf29aa4519e10a12fd8cca5a393148a7dcf5b1f53831b116dd687ea40d4ecda58b5cdd0780b2c2cc56bb0a50e3a918b633ca2978410e1e077f81634cc1  debug_assert-1.3.3.tar.gz
+"

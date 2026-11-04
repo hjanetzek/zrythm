@@ -1,0 +1,32 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=type-safe
+pkgver=0.2.4
+pkgrel=0
+pkgdesc="Zero overhead utilities for preventing bugs at compile time"
+url="https://github.com/foonathan/type_safe"
+arch="noarch"
+license="MIT"
+depends="debug-assert"
+makedepends="cmake debug-assert samurai"
+options="!check" # header-only; the tests need extra dependencies
+source="type_safe-$pkgver.tar.gz::https://github.com/foonathan/type_safe/archive/v$pkgver.tar.gz"
+builddir="$srcdir/type_safe-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+		-DTYPE_SAFE_BUILD_TEST_EXAMPLE=OFF
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+90e256af61649706c97d2cf317ce34b2b953fc841b04eab8193a865d3eced9a1044d22ecb520688f3adf35a06c346945604f177a933e7709cc167bb1637ccb4e  type_safe-0.2.4.tar.gz
+"

@@ -1,0 +1,30 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=gsl-lite
+pkgver=1.1.0
+pkgrel=0
+pkgdesc="Single-file header-only version of ISO C++ Guidelines Support Library"
+url="https://github.com/gsl-lite/gsl-lite"
+arch="noarch"
+license="MIT"
+makedepends="cmake samurai"
+options="!check" # header-only; the tests need extra dependencies
+source="gsl-lite-$pkgver.tar.gz::https://github.com/gsl-lite/gsl-lite/archive/refs/tags/v$pkgver.tar.gz"
+builddir="$srcdir/gsl-lite-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+9da9b3b29703117e835170f902eace691a31d02d0477eae0026de36d56ffc188e32f3ea769865e3cd501e2880fd0380d9e1f46c7561d94c9f57f8b61d377f4bb  gsl-lite-1.1.0.tar.gz
+"

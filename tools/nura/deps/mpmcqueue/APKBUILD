@@ -1,0 +1,30 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
+pkgname=mpmcqueue
+pkgver=1.0
+pkgrel=0
+pkgdesc="Bounded multi-producer multi-consumer concurrent queue"
+url="https://github.com/rigtorp/MPMCQueue"
+arch="noarch"
+license="MIT"
+makedepends="cmake samurai"
+options="!check" # header-only; the tests need extra dependencies
+source="MPMCQueue-$pkgver.tar.gz::https://github.com/rigtorp/MPMCQueue/archive/refs/tags/v$pkgver.tar.gz"
+builddir="$srcdir/MPMCQueue-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+f8517234acc12d92e06ebfeea7468bc9590570497690ed8c502d230f0e810996ca6b73289d7252b28340ad8b701647853e60dc2412034bc579e01c7c916042eb  MPMCQueue-1.0.tar.gz
+"
