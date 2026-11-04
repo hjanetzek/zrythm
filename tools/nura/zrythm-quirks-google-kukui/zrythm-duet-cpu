@@ -1,0 +1,51 @@
+#!/bin/sh
+# Lenovo Duet (MT8183): CPU frequency and idle settings for the Zrythm kiosk, run as root by
+# tinydm.service before each session (tinydm.service.d/60-zrythm-duet-cpu.conf).
+#
+# - Governor: schedutil, which raises the clock at once for real-time threads (PipeWire's data
+#   loop, the audio engine) and quickly for the UI. The kernel's default, ondemand, samples the
+#   load and reacts late to a 5.3 ms audio block (256 frames). performance keeps the clock at
+#   1.99 GHz.
+# - Idle: the A73s wake only from WFI (1 us); their cpu-sleep and cluster-sleep states take 400
+#   and 650 us to leave, an eighth of a 256-frame block. The A53s keep theirs, for the battery.
+#
+# Settings in /etc/default/zrythm: ZRYTHM_GOVERNOR (schedutil, performance, ondemand, ...; empty
+# leaves it), ZRYTHM_IDLE_CPUS (CPUs kept out of deep idle, default 4-7; empty: none). A reboot
+# restores the kernel's defaults.
+
+ZRYTHM_GOVERNOR=schedutil
+ZRYTHM_IDLE_CPUS=4-7
+[ -f /etc/default/zrythm ] && . /etc/default/zrythm
+
+say() { echo "zrythm-duet-cpu: $*"; }
+
+if [ -n "$ZRYTHM_GOVERNOR" ]; then
+	for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+		[ -w "$policy/scaling_governor" ] || continue
+		if echo "$ZRYTHM_GOVERNOR" > "$policy/scaling_governor" 2>/dev/null; then
+			say "${policy##*/} (CPUs $(cat "$policy/related_cpus")): $ZRYTHM_GOVERNOR"
+		else
+			say "${policy##*/}: governor $ZRYTHM_GOVERNOR not available ($(cat "$policy/scaling_available_governors"))"
+		fi
+	done
+fi
+
+# The CPUs in a list such as "4-7" or "0,4-7".
+cpus() {
+	echo "$1" | tr ',' '\n' | while IFS=- read -r first last; do
+		[ -n "$first" ] || continue
+		seq "$first" "${last:-$first}"
+	done
+}
+
+idle=$(cpus "$ZRYTHM_IDLE_CPUS")
+for state in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[1-9]*; do
+	[ -w "$state/disable" ] || continue
+	cpu=${state#/sys/devices/system/cpu/cpu}
+	cpu=${cpu%%/*}
+	off=0
+	for c in $idle; do [ "$c" = "$cpu" ] && off=1; done
+	echo "$off" > "$state/disable"
+done
+[ -n "$idle" ] && say "CPUs $(echo $idle | tr ' ' ,): no idle deeper than WFI"
+exit 0

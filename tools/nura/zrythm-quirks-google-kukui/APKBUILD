@@ -1,0 +1,29 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# Lenovo IdeaPad Duet (google-kukui) settings for the Zrythm kiosk. Installed
+# automatically on images with both the device package and the Zrythm UI.
+pkgname=zrythm-quirks-google-kukui
+pkgver=1
+pkgrel=0
+pkgdesc="Zrythm kiosk on the Lenovo IdeaPad Duet: touchscreen rotation, CPU governor and idle states"
+arch="noarch"
+url="https://www.zrythm.org/"
+license="LicenseRef-ZrythmLicense"
+options="!check"
+install_if="device-google-kukui postmarketos-ui-zrythm"
+source="
+	90-zrythm-touchscreen.rules
+	zrythm-duet-cpu
+	60-zrythm-duet-cpu.conf
+	"
+
+package() {
+	install -Dm644 "$srcdir"/90-zrythm-touchscreen.rules -t "$pkgdir"/usr/lib/udev/rules.d/
+	install -Dm755 "$srcdir"/zrythm-duet-cpu -t "$pkgdir"/usr/libexec/zrythm/
+	install -Dm644 "$srcdir"/60-zrythm-duet-cpu.conf \
+		-t "$pkgdir"/usr/lib/systemd/system/tinydm.service.d/
+}
+sha512sums="
+c6bdb2df6db749dcdb64098e5068b42cf6d3b09a65c6d9478129cb0092d2feb5753ceeee3ca02dbbd20a95da15fecc19726c987e529f1f5a86f0bae857e87fc5  90-zrythm-touchscreen.rules
+1742b3543abe00b42ed12335ad6bf56e668abc59feb0981674d93dd44d3244d6b6e0ac71279b219668ed6a337c9379d3eee0d68cc43699f4d351a02abeaf9795  zrythm-duet-cpu
+cd5cdecce133c56f0ea24b696739912acdbcd455b79a47f376e5e3cc1df4d0b02c167fda210d882085f2d5c9d0ff158ff79d3992d4b04eb708141880ed05f826  60-zrythm-duet-cpu.conf
+"

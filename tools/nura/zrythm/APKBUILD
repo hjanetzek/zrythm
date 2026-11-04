@@ -1,0 +1,219 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# Zrythm for postmarketOS/Nura: /usr/bin/zrythm and its plugin scanner.
+#
+# There is no source tarball for this branch: build from a local checkout with
+#   pmbootstrap build --src=/path/to/zrythm zrythm
+# --src skips $source, so put the sources CPM would fetch (JUCE, CLAP,
+# clap-helpers, the VST3 SDK, farbot, loop-tempo-estimator) into pmbootstrap's
+# distfiles cache first (tools/nura/seed-distfiles.sh). The build then needs no
+# network.
+#
+# Needs Qt 6.12 with CanvasPainter and TaskTree (tools/nura/qt6) and the
+# libraries in tools/nura/deps.
+pkgname=zrythm
+pkgver=2.0.0_alpha7
+pkgrel=0
+pkgdesc="Highly automated and intuitive digital audio workstation"
+url="https://www.zrythm.org/"
+arch="aarch64 x86_64"
+license="LicenseRef-ZrythmLicense"
+# The tests are not built; run them on the build host.
+options="!check"
+# Qt loads its platform, image format and QML plugins at run time, so abuild
+# cannot find these itself.
+depends="
+	font-dejavu
+	qt6-qtbase-wayland
+	qt6-qtcanvaspainter
+	qt6-qtdeclarative
+	qt6-qtsvg
+	qt6-qttasktree
+	qt6-qtwayland
+	xdg-utils
+	"
+makedepends="
+	alsa-lib-dev
+	au
+	boost1.89-dev
+	cmake
+	fmt-dev
+	fontconfig-dev
+	freetype-dev
+	gsl-lite
+	libsndfile-dev
+	libx11-dev
+	libxcb-dev
+	libxml2-utils
+	lilv-dev
+	linux-headers
+	lv2
+	lv2-dev
+	magic-enum
+	mesa-dev
+	mpmcqueue
+	nlohmann-json
+	nlohmann-json-schema-validator-dev
+	onetbb-dev
+	pkgconf
+	python3
+	qt6-qtbase-dev
+	qt6-qtbase-private-dev
+	qt6-qtcanvaspainter-dev
+	qt6-qtdeclarative-dev
+	qt6-qtdeclarative-private-dev
+	qt6-qtshadertools-dev
+	qt6-qtsvg-dev
+	qt6-qttasktree-dev
+	qt6-qttools-dev
+	samurai
+	scnlib-dev
+	spdlog-dev
+	type-safe
+	xdg-utils
+	xxhash-dev
+	zstd-dev
+	"
+subpackages="$pkgname-dbg"
+# Keep these the same as the GIT_TAGs in package-lock.cmake.
+_jucecommit=3fb5cbc0340758596dac39f7c8de47d562b4896e
+_clapcommit=29ffcc273be7c7c651f6c9953b99e69700e2387a
+_claphelperscommit=d0ddaf0b581e083a1f615d6509f1af907a5ce82c
+_farbotcommit=2a2bd99eefada6c78dff04bc0692912366952a86
+_ltecommit=987981c714cf1807284b1d8a85f21532b304bea9
+_vst3tag=v3.8.0_build_66
+# The VST3 SDK's submodules at $_vst3tag (base, cmake, pluginterfaces, public.sdk).
+_vst3basecommit=3d2e82f8e6bff59c1d8b7a27491a29c2286b5206
+_vst3cmakecommit=de6e54eeaaab35b7145f5c32c279b5e892146e04
+_vst3pluginterfacescommit=31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c
+_vst3publicsdkcommit=a3911a4615dabbfdfd9d181ee26b05c70c289a95
+source="
+	JUCE-$_jucecommit.tar.gz::https://github.com/juce-framework/JUCE/archive/$_jucecommit.tar.gz
+	clap-$_clapcommit.tar.gz::https://github.com/free-audio/clap/archive/$_clapcommit.tar.gz
+	clap-helpers-$_claphelperscommit.tar.gz::https://github.com/alex-tee/clap-helpers/archive/$_claphelperscommit.tar.gz
+	farbot-$_farbotcommit.tar.gz::https://github.com/zrythm/farbot/archive/$_farbotcommit.tar.gz
+	loop-tempo-estimator-$_ltecommit.tar.gz::https://github.com/saintmatthieu/loop-tempo-estimator/archive/$_ltecommit.tar.gz
+	vst3sdk-$_vst3tag.tar.gz::https://github.com/steinbergmedia/vst3sdk/archive/refs/tags/$_vst3tag.tar.gz
+	vst3_base-$_vst3basecommit.tar.gz::https://github.com/steinbergmedia/vst3_base/archive/$_vst3basecommit.tar.gz
+	vst3_cmake-$_vst3cmakecommit.tar.gz::https://github.com/steinbergmedia/vst3_cmake/archive/$_vst3cmakecommit.tar.gz
+	vst3_pluginterfaces-$_vst3pluginterfacescommit.tar.gz::https://github.com/steinbergmedia/vst3_pluginterfaces/archive/$_vst3pluginterfacescommit.tar.gz
+	vst3_public_sdk-$_vst3publicsdkcommit.tar.gz::https://github.com/steinbergmedia/vst3_public_sdk/archive/$_vst3publicsdkcommit.tar.gz
+	"
+builddir="$srcdir/$pkgname"
+
+# Unpacks distfile $1 into $srcdir (as directory $2, the archive's top-level
+# directory) unless it is unpacked already.
+_unpack() {
+	[ -d "$srcdir/$2" ] && return 0
+	local f="$SRCDEST/$1"
+	[ -e "$f" ] || f="$srcdir/$1"
+	[ -e "$f" ] || die "$1 missing from $SRCDEST: run tools/nura/seed-distfiles.sh"
+	tar -xzf "$f" -C "$srcdir"
+}
+
+prepare() {
+	default_prepare
+
+	# With --src, abuild has not fetched or unpacked $source: use the distfiles cache.
+	_unpack JUCE-$_jucecommit.tar.gz JUCE-$_jucecommit
+	_unpack clap-$_clapcommit.tar.gz clap-$_clapcommit
+	_unpack clap-helpers-$_claphelperscommit.tar.gz clap-helpers-$_claphelperscommit
+	_unpack farbot-$_farbotcommit.tar.gz farbot-$_farbotcommit
+	_unpack loop-tempo-estimator-$_ltecommit.tar.gz loop-tempo-estimator-$_ltecommit
+	_unpack vst3sdk-$_vst3tag.tar.gz vst3sdk-${_vst3tag#v}
+	_unpack vst3_base-$_vst3basecommit.tar.gz vst3_base-$_vst3basecommit
+	_unpack vst3_cmake-$_vst3cmakecommit.tar.gz vst3_cmake-$_vst3cmakecommit
+	_unpack vst3_pluginterfaces-$_vst3pluginterfacescommit.tar.gz vst3_pluginterfaces-$_vst3pluginterfacescommit
+	_unpack vst3_public_sdk-$_vst3publicsdkcommit.tar.gz vst3_public_sdk-$_vst3publicsdkcommit
+
+	# The VST3 SDK with its submodules in place (the archive has empty
+	# directories for them).
+	local sdk="$srcdir"/vst3sdk-${_vst3tag#v} sub dir
+	for sub in base:vst3_base-$_vst3basecommit cmake:vst3_cmake-$_vst3cmakecommit \
+		pluginterfaces:vst3_pluginterfaces-$_vst3pluginterfacescommit \
+		public.sdk:vst3_public_sdk-$_vst3publicsdkcommit; do
+		dir=${sub#*:}
+		sub=${sub%%:*}
+		rmdir "$sdk/$sub" 2>/dev/null || true
+		[ -e "$sdk/$sub" ] || mv "$srcdir/$dir" "$sdk/$sub"
+	done
+
+	local c
+	for c in $_jucecommit $_clapcommit $_claphelperscommit $_farbotcommit $_ltecommit $_vst3tag; do
+		grep -q "GIT_TAG $c" package-lock.cmake ||
+			die "$c is not a GIT_TAG in package-lock.cmake: update the APKBUILD"
+	done
+	[ "$(sed 's/^v//; s/-alpha\./_alpha/; s/-beta\./_beta/; s/-rc\./_rc/' VERSION.txt)" = "${pkgver%%_p*}" ] ||
+		die "pkgver $pkgver does not match VERSION.txt ($(cat VERSION.txt))"
+}
+
+build() {
+	# musl hides stat64 and the other *64 types without this.
+	export CFLAGS="$CFLAGS -D_LARGEFILE64_SOURCE"
+	export CXXFLAGS="$CXXFLAGS -D_LARGEFILE64_SOURCE"
+	# Tuned for the Lenovo Duet's Cortex-A73 cores (MT8183: 4x A73, 4x A53). The
+	# A73's instruction set is ARMv8.0 with CRC, so the package still runs on the
+	# A53s and on other ARMv8 boards.
+	case "$CARCH" in
+	aarch64)
+		export CFLAGS="$CFLAGS -mcpu=cortex-a73"
+		export CXXFLAGS="$CXXFLAGS -mcpu=cortex-a73"
+		;;
+	esac
+
+	# RelWithDebInfo with -g1: function names and lines for backtraces and perf
+	# (in zrythm-dbg) at a fraction of the size of full debug info. No LTO: its
+	# code generation would run under qemu in pmbootstrap.
+	# The flags are passed explicitly: CMake takes them from the environment only
+	# when it first configures a build directory, and pmbootstrap --lax keeps that
+	# directory. build-nura/ matches .gitignore, so pmbootstrap's rsync of the
+	# checkout neither copies nor deletes it.
+	cmake -S . -B build-nura -G Ninja \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_C_FLAGS="$CFLAGS" \
+		-DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+		-DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
+		-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
+		-DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS" \
+		-DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS" \
+		-DCMAKE_MODULE_LINKER_FLAGS="$LDFLAGS" \
+		-DZRYTHM_LTO=OFF \
+		-DZRYTHM_BUNDLE_RUNTIME=OFF \
+		-DZRYTHM_CHECK_UPDATES=OFF \
+		-DZRYTHM_MANPAGE=OFF \
+		-DZRYTHM_SHELL_COMPLETIONS=OFF \
+		-DZRYTHM_TESTS=OFF \
+		-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+		-DCPM_juce_SOURCE="$srcdir"/JUCE-$_jucecommit \
+		-DCPM_clap_SOURCE="$srcdir"/clap-$_clapcommit \
+		-DCPM_clap-helpers_SOURCE="$srcdir"/clap-helpers-$_claphelperscommit \
+		-DCPM_farbot_SOURCE="$srcdir"/farbot-$_farbotcommit \
+		-DCPM_loop-tempo-estimator_SOURCE="$srcdir"/loop-tempo-estimator-$_ltecommit \
+		-DCPM_vst3sdk_SOURCE="$srcdir"/vst3sdk-${_vst3tag#v}
+	# pmbootstrap's job count (JOBS, its "jobs" setting, default one per core),
+	# but at most one job per 2 GB of available memory: some of Zrythm's
+	# translation units need over 1.5 GB to compile.
+	local jobs="${JOBS:-$(nproc)}" memjobs
+	memjobs=$(awk '/^MemAvailable:/ { print int($2 / 2000000) }' /proc/meminfo)
+	[ "${memjobs:-0}" -ge 1 ] || memjobs=1
+	[ "$jobs" -le "$memjobs" ] || jobs=$memjobs
+	msg "Building with $jobs jobs"
+	cmake --build build-nura -j "$jobs"
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build-nura
+}
+
+sha512sums="
+fd6c2edc9aaa1f07e6192a272e5a249ec26100c12a751510e5855eb0ad2efb3e8b492127197d432ac1c751132214803a4354c71326bbf665dc764254e67360c5  JUCE-3fb5cbc0340758596dac39f7c8de47d562b4896e.tar.gz
+003b726551d8db673e6cda71a5b4c90e6205db17f2a7fbd8e4c8d04ac85576cbbf53a657fe6cb4823ac130ea0408da17ab394e8337be5653baa04033ca7f29f2  clap-29ffcc273be7c7c651f6c9953b99e69700e2387a.tar.gz
+ea89f4f1abb9319549b3996b809569228caa98942f9f2848f339c32851e142f7188dbe07de4fd61bf38a30799694f16dd8adaca7d3e006ba21df70ea61060df9  clap-helpers-d0ddaf0b581e083a1f615d6509f1af907a5ce82c.tar.gz
+641892f0d2334af33424b7007ba5ba1bed9aead628044b29bc1c72ca341200c9a27853a7471cf17e454b62ea6926059674fec2f50f44c88f11cc6de427edbaee  farbot-2a2bd99eefada6c78dff04bc0692912366952a86.tar.gz
+01af73f16872638c4a8ff2bc1a2050ff332d643c838ee0d713316be48b7b637f9dd2eefc5218db3f78867b1984d50bf46320d681413b026eebce7f265b279ffe  loop-tempo-estimator-987981c714cf1807284b1d8a85f21532b304bea9.tar.gz
+7dd3483420abd79ee6dcb9db16663fb4e4d448e4243f8b905600ca871593701e66da97badaf3d723aafa1321cf72cbc013066ea8177a9497ab740fd98171efa3  vst3sdk-v3.8.0_build_66.tar.gz
+0e5bade5ff9cba66e59736fcea9754439390d73f1ca99a99238d5a2e3cd8bbb85d3bf7a69928eb82fee2b30f46ae1482b33638db3688dba434d2c90455845e24  vst3_base-3d2e82f8e6bff59c1d8b7a27491a29c2286b5206.tar.gz
+bccc97b44f772b5b0a45b0e38a6cdd05eeefc7ba2c2d8da702be458a18a1230f9fc3f45ed1b8208639aa1d5682b9eeda57e4a1421ecc1ff879745a9933948e70  vst3_cmake-de6e54eeaaab35b7145f5c32c279b5e892146e04.tar.gz
+ec875090a22fd2bfc1e2ae4edc7d4071f65f5badfb87133d6adfbd4072a7e22515a83a158275a0d2032bd9342d7acb855d244fdd8f7fde66833a6bceae988eb1  vst3_pluginterfaces-31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c.tar.gz
+faecf7ff477ac8f5f1955609770bb2331207588a4be98ea86c15b199d321feb05eb915f8770c9d462c815b2d8c11e14eb78f271c2aa81d46c1ee9aef18231025  vst3_public_sdk-a3911a4615dabbfdfd9d181ee26b05c70c289a95.tar.gz
+"

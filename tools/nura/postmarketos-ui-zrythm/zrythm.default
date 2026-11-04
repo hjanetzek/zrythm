@@ -1,0 +1,23 @@
+# Settings for the Zrythm kiosk session (/etc/cage-ui/zrythm.sh,
+# /usr/libexec/zrythm/zrythm-kiosk). Read when the session starts:
+# sudo systemctl restart tinydm after a change.
+
+# Output scale (wlr-randr --scale) for every output. Empty: leave it.
+#ZRYTHM_OUTPUT_SCALE=1.5
+
+# PipeWire's quantum for the whole graph, in frames at 48 kHz. Empty: let
+# PipeWire choose.
+#ZRYTHM_QUANTUM=256
+
+# More arguments for zrythm.
+ZRYTHM_ARGS=""
+
+# Qt Quick's graphics API (QSG_RHI_BACKEND): opengl (Qt's default) or vulkan.
+#ZRYTHM_QSG_RHI_BACKEND=opengl
+
+# Lenovo Duet only (zrythm-quirks-google-kukui, applied as root before each
+# session): the CPU frequency governor for both clusters (schedutil;
+# performance keeps the clock up; empty leaves the kernel's ondemand) and the
+# CPUs kept out of idle states deeper than WFI (4-7, the A73s; empty: none).
+#ZRYTHM_GOVERNOR=schedutil
+#ZRYTHM_IDLE_CPUS=4-7

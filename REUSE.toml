@@ -544,3 +544,16 @@ path = ["data/schemas/dock-layout.schema.json", "tests/fixtures/schemas/dock-lay
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Alexandros Theodotou <alex@zrythm.org>"
 SPDX-License-Identifier = "LicenseRef-ZrythmLicense"
+
+[[annotations]]
+path = [
+  "tools/nura/zrythm/**",
+  "tools/nura/postmarketos-ui-zrythm/**",
+  "tools/nura/zrythm-quirks-google-kukui/**",
+  "tools/nura/deps/**",
+  "tools/nura/qt6/qt6-qtcanvaspainter/**",
+  "tools/nura/qt6/qt6-qttasktree/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Hannes Janetzek <hannes.janetzek@gmail.com>"
+SPDX-License-Identifier = "LicenseRef-ZrythmLicense"

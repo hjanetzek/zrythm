@@ -195,6 +195,9 @@ CMakeUserPresets.json
 # Conan
 conanbuild/
 
+# Nura/postmarketOS package build (tools/nura/zrythm)
+/build-nura/
+
 # PlantUML
 out
 
