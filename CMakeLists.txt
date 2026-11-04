@@ -205,6 +205,8 @@ option(ZRYTHM_EXTRA_OPTIMIZATIONS "Compile and link with extra optimizations (fo
 cmake_dependent_option(ZRYTHM_EXTRA_EXTRA_OPTIMIZATIONS "Compile and link with more aggressive optimizations (experimental)" OFF "ZRYTHM_EXTRA_OPTIMIZATIONS" OFF)
 cmake_dependent_option(ZRYTHM_NATIVE_OPTIMIZATIONS "Compile and link with native (-march/-mtune=native) optimizations (for performance)" OFF "ZRYTHM_EXTRA_OPTIMIZATIONS" OFF)
 option(ZRYTHM_EXTRA_DEBUG_INFO "Compile and link with extra debug info (for debugging) (-g3)" OFF)
+option(ZRYTHM_LTO "Use link-time optimization in optimized builds (if supported)" ON)
+option(ZRYTHM_BUNDLE_RUNTIME "Install the Qt libraries, QML modules and libstdc++ next to Zrythm (GNU/Linux; for self-contained packages)" ON)
 option(ZRYTHM_TIME_TRACE "Generate Clang time trace files (-ftime-trace) for performance profiling" OFF)
 set(ZRYTHM_ASIO_SDK_PATH "C:\\ASIOSDK\\2.3.4" CACHE STRING "Root path of ASIO SDK (there should be a 'common` directory here)" )
 option(ZRYTHM_CHECK_UPDATES "Check for updates on startup" ON)
@@ -443,7 +445,7 @@ add_library(_zrythm_coverage_lib INTERFACE)
 if(ZRYTHM_OPTIMIZED_BUILD)
   # LTO (skipped on ARM64EC: the MSVC backend crashes with C1001 during
   # /LTCG links)
-  if(NOT (MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64EC"))
+  if(ZRYTHM_LTO AND NOT (MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64EC"))
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported)
     if(ipo_supported)
@@ -844,7 +846,20 @@ set(HAVE_OPUS TRUE)
 
 # lilv (+ its lv2/serd/sord/sratom/zix chain, from Conan) for native LV2
 # plugin discovery/hosting
-find_package(lilv REQUIRED)
+find_package(lilv QUIET)
+if(NOT lilv_FOUND)
+  # distribution packages of lilv and lv2 provide pkg-config files only
+  pkg_check_modules(LILV REQUIRED IMPORTED_TARGET GLOBAL lilv-0)
+  add_library(lilv::lilv ALIAS PkgConfig::LILV)
+  # lv2_RES_DIRS is the directory containing the "lv2" directory of spec
+  # bundles
+  pkg_get_variable(_lv2dir lv2 lv2dir)
+  if(NOT _lv2dir)
+    message(FATAL_ERROR "lv2.pc not found or has no lv2dir variable")
+  endif()
+  cmake_path(GET _lv2dir PARENT_PATH lv2_RES_DIRS)
+  unset(_lv2dir)
+endif()
 # CMakeDeps exposes resdirs only per-config (e.g. lv2_RES_DIRS_DEBUG) -
 # map to the config in use so the LV2 spec bundles can be located
 string(TOUPPER "${CMAKE_BUILD_TYPE}" _lv2_build_type_upper)
@@ -865,9 +880,20 @@ if(CHROMAPRINT_FOUND AND FALSE) # disable for now
 endif()
 add_library(zrythm::chromaprint_lib ALIAS _zrythm_chromaprint_lib)
 
-find_package(zstd REQUIRED)
+find_package(zstd QUIET)
+if(NOT zstd_FOUND)
+  # distribution packages may provide pkg-config files only; links libzstd
+  # under the target name of the CMake package
+  pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET GLOBAL libzstd)
+  add_library(zstd::libzstd_static ALIAS PkgConfig::ZSTD)
+endif()
 
-find_package(xxHash REQUIRED)
+find_package(xxHash QUIET)
+if(NOT xxHash_FOUND)
+  # distribution packages may provide pkg-config files only
+  pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET GLOBAL libxxhash)
+  add_library(xxHash::xxhash ALIAS PkgConfig::XXHASH)
+endif()
 
 find_package(MPMCQueue REQUIRED)
 
@@ -929,6 +955,10 @@ endif()
 
 find_package(gsl-lite REQUIRED)
 find_package(type_safe REQUIRED)
+# type_safe's own CMake package exports the target without a namespace
+if(NOT TARGET type_safe::type_safe)
+  add_library(type_safe::type_safe ALIAS type_safe)
+endif()
 # mp-units fails to compile on AppleClang and also Au seems more ergonomic
 find_package(Au REQUIRED)
 
@@ -1224,7 +1254,7 @@ elseif(APPLE)
     )
   "
   COMPONENT Runtime)
-else()
+elseif(ZRYTHM_BUNDLE_RUNTIME)
   qt_generate_deploy_qml_app_script(
     TARGET zrythm
     OUTPUT_SCRIPT deploy_qml_script
