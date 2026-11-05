@@ -422,9 +422,9 @@ if(WIN32)
   )
 endif()
 
-# GCC 16+ rejects __attribute__((pure)) before noexcept in lambdas;
+# GCC 15+ rejects __attribute__((pure)) before noexcept in lambdas;
 # debug_assert hardcodes noexcept after DEBUG_ASSERT_PURE_FUNCTION
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
   add_compile_definitions(DEBUG_ASSERT_PURE_FUNCTION=)
 endif()
 
