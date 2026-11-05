@@ -91,6 +91,18 @@ ApplicationWindow {
     root.project.engine.deactivate();
   }
 
+  // Places the menu bar's menus in the toolbar's burger menu in narrow windows
+  // and in the menu bar in wide ones
+  function placeMainMenus(): void {
+    if (root.compactToolbar) {
+      while (mainMenuBar.count > 0)
+        headerBar.applicationMenu.addMenu(mainMenuBar.takeMenu(0));
+    } else {
+      while (headerBar.applicationMenu.count > 0)
+        mainMenuBar.addMenu(headerBar.applicationMenu.takeMenu(0));
+    }
+  }
+
   function updateActiveViewContext(focusItem: Item): void {
     let item = focusItem;
     while (item !== null && item !== undefined) {
@@ -133,11 +145,13 @@ ApplicationWindow {
     preferencesDialog: preferencesDialog
     saveController: saveController
     session: root.session
+    visible: !root.compactToolbar
   }
 
   Component.onCompleted: {
     console.log("ApplicationWindow created on platform", Qt.platform.os);
     project.engine.activate();
+    placeMainMenus();
   }
 
   // Resolves the view context from focus: the nearest ancestor of the
@@ -151,6 +165,7 @@ ApplicationWindow {
       updateActiveViewContext(activeFocusItem);
   }
   onActiveFocusItemChanged: updateActiveViewContext(activeFocusItem)
+  onCompactToolbarChanged: placeMainMenus()
   onClosing: {
     console.log("Closing project window...");
     closeAndDestroy();

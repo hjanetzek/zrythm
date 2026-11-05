@@ -10,12 +10,16 @@ import Qt.labs.synchronizer
 ZrythmToolBar {
   id: root
 
+  // Menu of the burger button shown in compact mode (empty until menus are
+  // added to it)
+  readonly property alias applicationMenu: applicationMenuPopup
   required property AppSettings appSettings
   required property ControlRoom controlRoom
   readonly property Project project: session.project
   required property NotificationCenter notificationCenter
   required property ProjectSession session
-  // Whether to leave out the transport readouts and the master output meters
+  // Whether to leave out the transport readouts and the master output meters,
+  // and to show the burger button
   property bool compact: false
 
   centerItems: [
@@ -35,6 +39,26 @@ ZrythmToolBar {
     }
   ]
   leftItems: [
+    ToolButton {
+      id: applicationMenuButton
+
+      icon.color: "transparent"
+      icon.source: ResourceManager.getIconUrl("zrythm-dark", "zrythm.svg")
+      visible: root.compact
+
+      onClicked: applicationMenuPopup.popup(applicationMenuButton, 0, applicationMenuButton.height)
+
+      ToolTip {
+        text: qsTr("Menu")
+      }
+
+      Menu {
+        id: applicationMenuPopup
+      }
+    },
+    ToolSeparator {
+      visible: root.compact
+    },
     UndoSplitButton {
       id: undoBtn
 
