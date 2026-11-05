@@ -1,0 +1,34 @@
+# Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
+# zrythm: the nlohmann_json commit Zrythm pins (package-lock.cmake, conan.lock
+# "3.12.1"); aports' 3.12.0 never compiles its from_json for std::optional.
+# Based on aports' community/nlohmann-json (see ../../README.md).
+pkgname=nlohmann-json
+pkgver=3.12.0_git20250510
+pkgrel=0
+_commit=230bfd15a2bb7f01ebb3fcd3cf898b697ef43c48
+pkgdesc="JSON for Modern C++"
+url="https://github.com/nlohmann/json"
+arch="noarch"
+license="MIT"
+makedepends="cmake samurai"
+options="!check" # the tests need the separate test data repository
+source="nlohmann-json-$_commit.tar.gz::https://github.com/nlohmann/json/archive/$_commit.tar.gz"
+builddir="$srcdir/json-$_commit"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DJSON_MultipleHeaders=ON \
+		-DJSON_BuildTests=OFF
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums="
+e3c4d655336ccbabf7959b8712a4719c0b30fc7f3767902edfd5453c93d620bf54254e9de1671c04c656fe6af4be74442eb8feb450604f3430052f6146839463  nlohmann-json-230bfd15a2bb7f01ebb3fcd3cf898b697ef43c48.tar.gz
+"

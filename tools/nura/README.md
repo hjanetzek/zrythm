@@ -23,7 +23,7 @@ USB boot.
 | `postmarketos-ui-zrythm/` | Kiosk UI: `postmarketos-base-ui-cage` + `zrythm` + `pipewire-alsa`. `/etc/cage-ui/zrythm.sh` sets the output scale, waits for PipeWire and forces its quantum; `/usr/libexec/zrythm/zrythm-kiosk` starts Zrythm as a native Wayland client and restarts it if it exits; settings in `/etc/default/zrythm`; a `tinydm.service` drop-in raises the real-time and locked-memory limits |
 | `zrythm-quirks-google-kukui/` | Lenovo Duet only: udev rule that rotates the touchscreen and pen, and the CPU governor and idle settings applied before each session; installed automatically (`install_if` the device package and the Zrythm UI) |
 | `qt6/` | Qt 6.12.0, which Alpine edge does not ship yet (it has 6.11): the recipes of aports MR [!107047](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/107047) for the modules Zrythm needs, plus `qt6-qtcanvaspainter` and `qt6-qttasktree` (new in 6.12, not in aports) |
-| `deps/` | Libraries Zrythm needs that aports does not package: au, scnlib, magic_enum, type_safe (with debug_assert), gsl-lite, json-schema-validator, MPMCQueue, at the versions in `conan.lock` |
+| `deps/` | Libraries Zrythm needs that aports does not package: au, scnlib, magic_enum, type_safe (with debug_assert), gsl-lite, json-schema-validator, MPMCQueue, at the versions in `conan.lock`; and nlohmann_json at the commit Zrythm pins (aports' 3.12.0 never compiles its `from_json` for `std::optional`) |
 | `deploy.sh` | Builds packages (`zrythm` from this checkout) and installs them on a running device over SSH (`pmbootstrap sideload`), optionally restarting the session |
 | `seed-distfiles.sh` | Puts the sources CPM would fetch (JUCE, CLAP, clap-helpers, the VST3 SDK with its submodules, farbot, loop-tempo-estimator with pffft) into pmbootstrap's distfiles cache, so `zrythm` builds offline |
 
@@ -105,6 +105,7 @@ packages are in the local repository, apk prefers them.
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qtbase qt6-qtshadertools qt6-qtsvg qt6-qtlanguageserver qt6-qttasktree
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qtdeclarative
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 qt6-qttools qt6-qtwayland qt6-qtcanvaspainter
+pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 nlohmann-json
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 au debug-assert gsl-lite magic-enum mpmcqueue nlohmann-json-schema-validator scnlib type-safe
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 --src="$PWD" zrythm
 pmbootstrap -c ~/.config/pmbootstrap-zrythm-duet.cfg build --arch aarch64 postmarketos-ui-zrythm zrythm-quirks-google-kukui

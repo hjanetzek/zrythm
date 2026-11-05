@@ -2,7 +2,7 @@
 # zrythm: build dependency of Zrythm that aports does not package (see ../../README.md)
 pkgname=nlohmann-json-schema-validator
 pkgver=2.4.1
-pkgrel=0
+pkgrel=1
 pkgdesc="JSON schema validator for JSON for Modern C++"
 url="https://github.com/pboettch/json-schema-validator"
 arch="all"
