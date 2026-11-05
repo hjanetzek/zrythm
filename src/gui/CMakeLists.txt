@@ -358,6 +358,7 @@ set(rel_qml_file_paths
   components/TrackSelectionModel.qml
   components/TrackView.qml
   components/TransportControls.qml
+  components/TransportReadouts.qml
   components/ThemeSettingsController.qml
   components/UndoSplitButton.qml
   components/ViewContext.qml

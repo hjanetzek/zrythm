@@ -16,6 +16,8 @@ ZrythmToolBar {
   readonly property Project project: session.project
   required property NotificationCenter notificationCenter
   required property ProjectSession session
+  // Whether the tempo, position and time signature readouts are shown here
+  property bool showTransportReadouts: true
 
   centerItems: [
     TransportControls {
@@ -23,10 +25,14 @@ ZrythmToolBar {
 
       appSettings: root.appSettings
       metronome: root.controlRoom.metronome
-      tempoMap: root.project.tempoMap
       transport: root.project.transport
       transportController: root.session.transportController
+    },
+    TransportReadouts {
+      tempoMap: root.project.tempoMap
+      transport: root.project.transport
       undoStack: root.session.undoStack
+      visible: root.showTransportReadouts
     }
   ]
   leftItems: [

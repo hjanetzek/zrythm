@@ -79,6 +79,9 @@ ApplicationWindow {
   }
   readonly property Project project: session.project
   required property ProjectSession session
+  // In narrow windows, the transport readouts move from the toolbar to the
+  // status bar to leave room for the toolbar's buttons
+  readonly property bool transportReadoutsInStatusBar: width < 1200
 
   function closeAndDestroy() {
     console.log("Closing and destroying project window");
@@ -110,6 +113,7 @@ ApplicationWindow {
     controlRoom: root.controlRoom
     notificationCenter: root.notificationCenter
     session: root.session
+    showTransportReadouts: !root.transportReadoutsInStatusBar
   }
   menuBar: MainMenuBar {
     id: mainMenuBar
@@ -509,6 +513,12 @@ ApplicationWindow {
         }
       ]
       rightItems: [
+        TransportReadouts {
+          tempoMap: root.project.tempoMap
+          transport: root.project.transport
+          undoStack: root.session.undoStack
+          visible: root.transportReadoutsInStatusBar
+        },
         StatusBarText {
           text: qsTr("Cache: %1 pending · %2 complete").arg(cacheActivityAggregator.cachePendingCount).arg(cacheActivityAggregator.cacheCompleteCount)
           visible: root.appSettings.showCacheActivity
