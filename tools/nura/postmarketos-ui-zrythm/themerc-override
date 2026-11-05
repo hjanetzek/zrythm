@@ -1,9 +1,9 @@
 # Touch-sized title bar buttons, in logical pixels (doubled at output scale 2)
 window.button.width: 44
-window.button.height: 36
+window.button.height: 27
 window.button.spacing: 4
 window.titlebar.padding.width: 4
-window.titlebar.padding.height: 4
+window.titlebar.padding.height: 3
 
 # Dark frames in Zrythm's dark theme colors (ZrythmTheme.qml: page #161616,
 # button #323232, text #E3E3E3)
