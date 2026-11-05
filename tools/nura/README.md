@@ -13,7 +13,7 @@ USB boot.
 
 | Target | Nura device | Status |
 |---|---|---|
-| Lenovo IdeaPad Duet (Chromebook) | `google-kukui` (mainline MediaTek kernel) | packages written, not built yet |
+| Lenovo IdeaPad Duet (Chromebook) | `google-kukui` (mainline MediaTek kernel) | boots into Zrythm: native Wayland in labwc, OpenGL ES, scale 2 |
 
 ## Packages
 
@@ -163,10 +163,12 @@ default user: labwc with the configuration in `/etc/xdg/zrythm-labwc/`, whose `a
    (`QT_QPA_PLATFORM=wayland`) with an unlimited locked-memory limit, and restarts it two seconds
    after it exits (also when its window is closed).
 
-labwc (`rc.xml`) draws the window decorations: Zrythm's windows open maximized with a title bar,
-whose buttons (`themerc-override`: touch-sized) close a window or turn it into a floating one;
-plugin windows that set their own size open floating. Taps act as mouse clicks
-(`mouseEmulation`), also on the title bars. There is no desktop menu and no minimize button,
+labwc (`rc.xml`) manages the windows. Zrythm's app ID is `org.zrythm.zrythm` (Qt derives it
+from the organization domain; `lswt` lists the open windows). Its main windows (greeter, project
+window) are of type "normal": a window rule makes them fullscreen and always below other windows.
+Plugin windows and undocked panels have the project window as parent, so labwc gives them type
+"dialog": they float above it with title bars, whose buttons (`themerc-override`: touch-sized)
+maximize or close them. Taps act as mouse clicks (`mouseEmulation`), also on the title bars. There is no desktop menu and no minimize button,
 since nothing could bring a minimized window back.
 
 On a device that ran the Kick or Oscairn image, remove their kiosk packages
@@ -195,7 +197,9 @@ Qt draws with OpenGL ES through EGL on Panfrost (aports builds Qt with `opengles
 
 ## Known issues
 
-- Not built or run on the device yet.
+- Native plugin GUIs (`PluginHostWindowWidget`) have no parent window: a resizable one is of
+  type "normal" and would be made fullscreen and kept at the bottom like the main window. Giving
+  them the project window as transient parent (as the generic editor windows have) fixes that.
 - The 256-frame quantum is a starting point; check `pw-top` for xruns.
 - JUCE's ALSA backend does not ask for real-time scheduling for its audio thread; PipeWire's data
   loop is `SCHED_FIFO`. Whether the engine needs more is to be measured on the device.

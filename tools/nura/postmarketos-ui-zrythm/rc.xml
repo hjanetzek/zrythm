@@ -19,10 +19,13 @@
   <touch deviceName="" mouseEmulation="yes" />
   <tablet mouseEmulation="yes" />
   <windowRules>
-    <!-- Zrythm's windows open maximized; the title bar closes a window or
-         turns it into a floating one -->
-    <windowRule identifier="zrythm">
-      <action name="Maximize" />
+    <!-- Zrythm's main windows (greeter, project) fill the screen and stay
+         below all other windows. Plugin windows and undocked panels have the
+         project window as parent, so labwc gives them type "dialog": they
+         float above it with a title bar. -->
+    <windowRule identifier="org.zrythm.zrythm" type="normal">
+      <action name="ToggleFullscreen" />
+      <action name="ToggleAlwaysOnBottom" />
     </windowRule>
   </windowRules>
 </labwc_config>
