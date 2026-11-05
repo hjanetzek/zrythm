@@ -525,6 +525,17 @@ Item {
     readonly property bool favorited: root.favoriteKeys.includes(descriptor.format + ":" + descriptor.uniqueId)
     required property int index
 
+    // Starts or ends dragging this row's descriptor out of the list
+    function setDescriptorDragActive(active: bool) {
+      if (active) {
+        pluginListView.currentIndex = pluginDescriptorRow.index;
+        draggable.descriptor = pluginDescriptorRow.descriptor;
+        draggable.Drag.active = true;
+      } else {
+        draggable.Drag.active = false;
+      }
+    }
+
     alternate: index % 2 === 1
     highlighted: ListView.isCurrentItem
     icon.source: {
@@ -583,17 +594,19 @@ Item {
       DragHandler {
         id: dragHandler
 
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
         target: null
 
-        onActiveChanged: {
-          if (active) {
-            pluginListView.currentIndex = pluginDescriptorRow.index;
-            draggable.descriptor = pluginDescriptorRow.descriptor;
-            draggable.Drag.active = true;
-          } else {
-            draggable.Drag.active = false;
-          }
-        }
+        onActiveChanged: pluginDescriptorRow.setDescriptorDragActive(active)
+      },
+      // On touchscreens only a horizontal swipe drags the descriptor out;
+      // vertical swipes scroll the list
+      DragHandler {
+        acceptedDevices: PointerDevice.TouchScreen
+        target: null
+        yAxis.enabled: false
+
+        onActiveChanged: pluginDescriptorRow.setDescriptorDragActive(active)
       },
       TapHandler {
         onDoubleTapped: root.pluginDescriptorActivated(pluginDescriptorRow.descriptor)
