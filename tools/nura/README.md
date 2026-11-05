@@ -131,6 +131,18 @@ the Kick README; they apply unchanged.
 The SSH key is installed: `ssh <user>@<hostname>.local`. Zrythm's output goes to
 `~/.local/state/tinydm.log`, its own log to `~/.cache/Zrythm.org/Zrythm/`.
 
+## Previewing without the device
+
+`tools/nura/preview-kiosk.sh` runs a desktop build (default `conanbuild/Debug`) the way the kiosk
+shows it: a headless labwc with the kiosk's configuration and a 1920×1200 output at scale 2,
+nothing on the desktop; it takes a screenshot with grim after a while. `-k` keeps it running for
+`wlrctl` (clicks) and more screenshots; arguments after `--` go to zrythm, e.g. a project
+directory. Needs `labwc`, `grim`, `wlr-randr` (and `wlrctl`).
+
+```sh
+tools/nura/preview-kiosk.sh -o /tmp/kiosk.png -- ~/Audio/zrythm/testing
+```
+
 ## Updating a running device
 
 ```sh
@@ -182,6 +194,7 @@ tinydm` applies them:
 |---|---|---|
 | `ZRYTHM_OUTPUT_SCALE` | `2` | output scale for every output; empty leaves it |
 | `ZRYTHM_QUANTUM` | `256` | PipeWire's quantum for the whole graph; empty lets PipeWire choose |
+| `ZRYTHM_PROJECT` | empty | project directory or `.zpj` file to open at start, without the project selector |
 | `ZRYTHM_ARGS` | empty | more arguments for `zrythm` |
 | `ZRYTHM_QSG_RHI_BACKEND` | unset (OpenGL) | Qt Quick's graphics API (`QSG_RHI_BACKEND`), e.g. `vulkan` |
 | `ZRYTHM_GOVERNOR`, `ZRYTHM_IDLE_CPUS` | `schedutil`, `4-7` on the Duet | CPU governor and the CPUs kept out of deep idle (`zrythm-quirks-google-kukui`) |

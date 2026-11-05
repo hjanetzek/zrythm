@@ -16,7 +16,7 @@ export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
 while true; do
 	# shellcheck disable=SC2086 # ZRYTHM_ARGS is a list of arguments
-	/usr/bin/zrythm ${ZRYTHM_ARGS:-}
+	/usr/bin/zrythm ${ZRYTHM_ARGS:-} ${ZRYTHM_PROJECT:+"$ZRYTHM_PROJECT"}
 	echo "zrythm-kiosk: zrythm exited ($?), restarting"
 	sleep 2
 done

@@ -9,6 +9,10 @@
 # PipeWire choose.
 #ZRYTHM_QUANTUM=256
 
+# Project to open at start, without the project selector: a project directory
+# or .zpj file. Empty: Zrythm starts with its project selector.
+#ZRYTHM_PROJECT=/home/user/Documents/Zrythm/my-project
+
 # More arguments for zrythm.
 ZRYTHM_ARGS=""
 
