@@ -19,8 +19,9 @@ arch="aarch64 x86_64"
 license="LicenseRef-ZrythmLicense"
 # The tests are not built; run them on the build host.
 options="!check"
-# Qt loads its platform, image format and QML plugins at run time, so abuild
-# cannot find these itself.
+# Qt loads its platform, image format and QML plugins at run time, and JUCE
+# dlopen()s the X11 extension libraries (for the editor windows of plugins it
+# hosts), so abuild cannot find these itself.
 depends="
 	font-dejavu
 	qt6-qtbase-wayland
@@ -29,6 +30,13 @@ depends="
 	qt6-qtsvg
 	qt6-qttasktree
 	qt6-qtwayland
+	so:libXcomposite.so.1
+	so:libXcursor.so.1
+	so:libXext.so.6
+	so:libXi.so.6
+	so:libXinerama.so.1
+	so:libXrandr.so.2
+	so:libXrender.so.1
 	xdg-utils
 	"
 makedepends="
@@ -43,6 +51,13 @@ makedepends="
 	libsndfile-dev
 	libx11-dev
 	libxcb-dev
+	libxcomposite-dev
+	libxcursor-dev
+	libxext-dev
+	libxi-dev
+	libxinerama-dev
+	libxrandr-dev
+	libxrender-dev
 	libxml2-utils
 	lilv-dev
 	linux-headers
