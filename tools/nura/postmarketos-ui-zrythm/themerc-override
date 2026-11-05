@@ -4,3 +4,15 @@ window.button.height: 36
 window.button.spacing: 4
 window.titlebar.padding.width: 4
 window.titlebar.padding.height: 4
+
+# Dark frames in Zrythm's dark theme colors (ZrythmTheme.qml: page #161616,
+# button #323232, text #E3E3E3)
+window.active.title.bg.color: #323232
+window.inactive.title.bg.color: #161616
+window.active.border.color: #323232
+window.inactive.border.color: #161616
+window.active.label.text.color: #E3E3E3
+window.inactive.label.text.color: #8A8A8A
+window.active.button.unpressed.image.color: #E3E3E3
+window.inactive.button.unpressed.image.color: #8A8A8A
+window.button.hover.bg.color: #FFFFFF1A
