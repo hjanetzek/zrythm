@@ -99,8 +99,11 @@ T.TreeViewDelegate {
     }
   }
 
+  // Hover highlights follow pointers only; on a touchscreen the point under
+  // a finger (e.g. while dragging) is not a hover
   HoverHandler {
     id: hoverHandler
 
+    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
   }
 }
