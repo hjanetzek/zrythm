@@ -153,7 +153,7 @@ The Qt packages and the libraries in `deps/` are installed with Zrythm the first
 
 `postmarketos-ui-zrythm` runs, in the cage session started by tinydm as the default user:
 
-1. `/etc/cage-ui/zrythm.sh` (sourced by `cage-ui-session.sh`): sets every output to scale 1.5
+1. `/etc/cage-ui/zrythm.sh` (sourced by `cage-ui-session.sh`): sets every output to scale 2
    (`ZRYTHM_OUTPUT_SCALE`), waits up to 10 s for PipeWire's default sink and forces PipeWire's
    quantum to 256 frames (`ZRYTHM_QUANTUM`).
 2. `/usr/libexec/zrythm/zrythm-kiosk`: starts `zrythm` as a native Wayland client
@@ -162,14 +162,16 @@ The Qt packages and the libraries in `deps/` are installed with Zrythm the first
 
 Only one kiosk UI package may be installed: the cage session sources every `/etc/cage-ui/*.sh`
 in alphabetical order and the last `CAGE_UI_COMMAND` wins. On a device with the Kick or Oscairn
-image, remove theirs (`sudo apk del postmarketos-ui-kick postmarketos-ui-oscairn`).
+image, remove theirs (`sudo apk del postmarketos-ui-kick postmarketos-ui-oscairn`), and check
+`ls /etc/cage-ui` for scripts no package owns any more (`apk info --who-owns`): an old
+`kick.sh` resets the output scale to 1 half a minute after the session starts.
 
 Settings, in `/etc/default/zrythm` (a config file, kept on upgrades); `sudo systemctl restart
 tinydm` applies them:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ZRYTHM_OUTPUT_SCALE` | `1.5` | output scale for every output; empty leaves it |
+| `ZRYTHM_OUTPUT_SCALE` | `2` | output scale for every output; empty leaves it |
 | `ZRYTHM_QUANTUM` | `256` | PipeWire's quantum for the whole graph; empty lets PipeWire choose |
 | `ZRYTHM_ARGS` | empty | more arguments for `zrythm` |
 | `ZRYTHM_QSG_RHI_BACKEND` | unset (OpenGL) | Qt Quick's graphics API (`QSG_RHI_BACKEND`), e.g. `vulkan` |

@@ -3,7 +3,7 @@
 # sudo systemctl restart tinydm after a change.
 
 # Output scale (wlr-randr --scale) for every output. Empty: leave it.
-#ZRYTHM_OUTPUT_SCALE=1.5
+#ZRYTHM_OUTPUT_SCALE=2
 
 # PipeWire's quantum for the whole graph, in frames at 48 kHz. Empty: let
 # PipeWire choose.

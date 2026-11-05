@@ -2,7 +2,7 @@
 # Kiosk UI for postmarketOS/Nura: boots straight into Zrythm (cage, Wayland, PipeWire).
 pkgname=postmarketos-ui-zrythm
 pkgver=1
-pkgrel=0
+pkgrel=1
 pkgdesc="Zrythm digital audio workstation as a kiosk (Wayland, cage)"
 arch="noarch"
 url="https://www.zrythm.org/"
@@ -32,8 +32,8 @@ package() {
 		-t "$pkgdir"/usr/lib/systemd/system/tinydm.service.d/
 }
 sha512sums="
-7e0ca3173319fd7362fe576140c6115d56e545f85d9529ed0e3d4b2b543b540047f714da7d2e1489be96c08cc2e0007721ab2bb6f2751f808086b4e8a514ebed  zrythm.sh
+7b17b544fe4eb862b0d09aecf8b83565e24ea8dc52a7c1088d8427930898106b99ff8787d11ba2c3e7379c0eff52060bf7c4b8c7ced1cead865c92dea1f825a7  zrythm.sh
 1fa279c8dbb65295a8e5aac15897e5c2dcb2f2d482019fd1e9ea52c2df261b0b13300e0edebebc7d92f906aa3b910fe93e8ff5a73467a65cdc11919a33974587  zrythm-kiosk
-4d218e83e34c1e3f5b86470e1d98ac952b43c7e6e211ccdbf270fa8963e77bd7025c9bcfa57323b4c919eafbf45111c56af3e8e04f9ba2c5a279d1b5be06a879  zrythm.default
+59435b8a3f5a0f4c3e977b88ecaec9785bc72f7d0336a8ef4fd345fdf4fc5d08007f5b93ffc73ba91dc0866ceb36ab054150de9d9dab75267bac115793d5ce0a  zrythm.default
 e84cf5a2f59760b1adc9510e8ca345f6a8a8487298b1746734efd23a8496fcb670b36f88ce49bb07c6eb2a78499813b398833e769d6386e37c1cffbfd244f997  50-zrythm-realtime.conf
 "

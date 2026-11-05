@@ -2,7 +2,7 @@
 # The session runs with "set -eu -o pipefail" (from cage-ui-autorotate.sh): never fail here.
 # Settings: /etc/default/zrythm.
 
-ZRYTHM_OUTPUT_SCALE=1.5
+ZRYTHM_OUTPUT_SCALE=2
 ZRYTHM_QUANTUM=256
 [ -f /etc/default/zrythm ] && . /etc/default/zrythm
 
