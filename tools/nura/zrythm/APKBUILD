@@ -44,6 +44,7 @@ makedepends="
 	au
 	boost1.89-dev
 	cmake
+	elfutils-dev
 	fmt-dev
 	fontconfig-dev
 	freetype-dev
@@ -197,6 +198,8 @@ build() {
 	# RelWithDebInfo with -g1: function names and lines for backtraces and perf
 	# (in zrythm-dbg) at a fraction of the size of full debug info. No LTO: its
 	# code generation would run under qemu in pmbootstrap.
+	# ZRYTHM_WITH_LIBDW: backtraces through libgcc's unwinder and libdw; musl has
+	# no execinfo.h, backward-cpp's default.
 	# The CPM packages are taken from $srcdir through FetchContent's source
 	# directory overrides, which keep the declarations in package-lock.cmake
 	# (DOWNLOAD_ONLY, SOURCE_SUBDIR); CPM's own CPM_<name>_SOURCE overrides drop
@@ -222,6 +225,7 @@ build() {
 		-DZRYTHM_MANPAGE=OFF \
 		-DZRYTHM_SHELL_COMPLETIONS=OFF \
 		-DZRYTHM_TESTS=OFF \
+		-DZRYTHM_WITH_LIBDW=ON \
 		-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
 		-DFETCHCONTENT_SOURCE_DIR_JUCE="$srcdir"/JUCE-$_jucecommit \
 		-DFETCHCONTENT_SOURCE_DIR_CLAP="$srcdir"/clap-$_clapcommit \
