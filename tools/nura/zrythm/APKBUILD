@@ -81,6 +81,9 @@ _claphelperscommit=d0ddaf0b581e083a1f615d6509f1af907a5ce82c
 _farbotcommit=2a2bd99eefada6c78dff04bc0692912366952a86
 _ltecommit=987981c714cf1807284b1d8a85f21532b304bea9
 _vst3tag=v3.8.0_build_66
+# pffft, fetched by loop-tempo-estimator itself (source/cmake/pffft.cmake).
+_pffftcommit=fbc4058602803f40dc554b8a5d2bcc694c005f2f
+_pffftdir=jpommier-pffft-fbc405860280
 # The VST3 SDK's submodules at $_vst3tag (base, cmake, pluginterfaces, public.sdk).
 _vst3basecommit=3d2e82f8e6bff59c1d8b7a27491a29c2286b5206
 _vst3cmakecommit=de6e54eeaaab35b7145f5c32c279b5e892146e04
@@ -97,6 +100,7 @@ source="
 	vst3_cmake-$_vst3cmakecommit.tar.gz::https://github.com/steinbergmedia/vst3_cmake/archive/$_vst3cmakecommit.tar.gz
 	vst3_pluginterfaces-$_vst3pluginterfacescommit.tar.gz::https://github.com/steinbergmedia/vst3_pluginterfaces/archive/$_vst3pluginterfacescommit.tar.gz
 	vst3_public_sdk-$_vst3publicsdkcommit.tar.gz::https://github.com/steinbergmedia/vst3_public_sdk/archive/$_vst3publicsdkcommit.tar.gz
+	pffft-$_pffftcommit.tar.gz::https://bitbucket.org/jpommier/pffft/get/$_pffftcommit.tar.gz
 	"
 builddir="$srcdir/$pkgname"
 
@@ -118,7 +122,16 @@ prepare() {
 	_unpack clap-$_clapcommit.tar.gz clap-$_clapcommit
 	_unpack clap-helpers-$_claphelperscommit.tar.gz clap-helpers-$_claphelperscommit
 	_unpack farbot-$_farbotcommit.tar.gz farbot-$_farbotcommit
-	_unpack loop-tempo-estimator-$_ltecommit.tar.gz loop-tempo-estimator-$_ltecommit
+	if ! [ -d "$srcdir"/loop-tempo-estimator-$_ltecommit ]; then
+		_unpack loop-tempo-estimator-$_ltecommit.tar.gz loop-tempo-estimator-$_ltecommit
+		# The PATCHES of its declaration in package-lock.cmake.
+		(cd "$srcdir"/loop-tempo-estimator-$_ltecommit &&
+			patch -p1 -i "$builddir"/cmake/patches/loop-tempo-estimator-0.0.5-include-vector.patch) ||
+			die "patching loop-tempo-estimator failed"
+	fi
+	_unpack pffft-$_pffftcommit.tar.gz $_pffftdir
+	grep -q "GIT_TAG $_pffftcommit" "$srcdir"/loop-tempo-estimator-$_ltecommit/source/cmake/pffft.cmake ||
+		die "_pffftcommit differs from loop-tempo-estimator's source/cmake/pffft.cmake"
 	_unpack vst3sdk-$_vst3tag.tar.gz vst3sdk-${_vst3tag#v}
 	_unpack vst3_base-$_vst3basecommit.tar.gz vst3_base-$_vst3basecommit
 	_unpack vst3_cmake-$_vst3cmakecommit.tar.gz vst3_cmake-$_vst3cmakecommit
@@ -169,6 +182,11 @@ build() {
 	# RelWithDebInfo with -g1: function names and lines for backtraces and perf
 	# (in zrythm-dbg) at a fraction of the size of full debug info. No LTO: its
 	# code generation would run under qemu in pmbootstrap.
+	# The CPM packages are taken from $srcdir through FetchContent's source
+	# directory overrides, which keep the declarations in package-lock.cmake
+	# (DOWNLOAD_ONLY, SOURCE_SUBDIR); CPM's own CPM_<name>_SOURCE overrides drop
+	# them. FetchContent does not patch an overridden source: prepare() applies
+	# the declared PATCHES.
 	# The flags are passed explicitly: CMake takes them from the environment only
 	# when it first configures a build directory, and pmbootstrap --lax keeps that
 	# directory. build-nura/ matches .gitignore, so pmbootstrap's rsync of the
@@ -190,12 +208,13 @@ build() {
 		-DZRYTHM_SHELL_COMPLETIONS=OFF \
 		-DZRYTHM_TESTS=OFF \
 		-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
-		-DCPM_juce_SOURCE="$srcdir"/JUCE-$_jucecommit \
-		-DCPM_clap_SOURCE="$srcdir"/clap-$_clapcommit \
-		-DCPM_clap-helpers_SOURCE="$srcdir"/clap-helpers-$_claphelperscommit \
-		-DCPM_farbot_SOURCE="$srcdir"/farbot-$_farbotcommit \
-		-DCPM_loop-tempo-estimator_SOURCE="$srcdir"/loop-tempo-estimator-$_ltecommit \
-		-DCPM_vst3sdk_SOURCE="$srcdir"/vst3sdk-${_vst3tag#v}
+		-DFETCHCONTENT_SOURCE_DIR_JUCE="$srcdir"/JUCE-$_jucecommit \
+		-DFETCHCONTENT_SOURCE_DIR_CLAP="$srcdir"/clap-$_clapcommit \
+		-DFETCHCONTENT_SOURCE_DIR_CLAP-HELPERS="$srcdir"/clap-helpers-$_claphelperscommit \
+		-DFETCHCONTENT_SOURCE_DIR_FARBOT="$srcdir"/farbot-$_farbotcommit \
+		-DFETCHCONTENT_SOURCE_DIR_LOOP-TEMPO-ESTIMATOR="$srcdir"/loop-tempo-estimator-$_ltecommit \
+		-DFETCHCONTENT_SOURCE_DIR_VST3SDK="$srcdir"/vst3sdk-${_vst3tag#v} \
+		-DFETCHCONTENT_SOURCE_DIR_PFFFT="$srcdir"/$_pffftdir
 	# pmbootstrap's job count (JOBS, its "jobs" setting, default one per core),
 	# but at most one job per 2 GB of available memory: some of Zrythm's
 	# translation units need over 1.5 GB to compile.
@@ -222,4 +241,5 @@ ea89f4f1abb9319549b3996b809569228caa98942f9f2848f339c32851e142f7188dbe07de4fd61b
 bccc97b44f772b5b0a45b0e38a6cdd05eeefc7ba2c2d8da702be458a18a1230f9fc3f45ed1b8208639aa1d5682b9eeda57e4a1421ecc1ff879745a9933948e70  vst3_cmake-de6e54eeaaab35b7145f5c32c279b5e892146e04.tar.gz
 ec875090a22fd2bfc1e2ae4edc7d4071f65f5badfb87133d6adfbd4072a7e22515a83a158275a0d2032bd9342d7acb855d244fdd8f7fde66833a6bceae988eb1  vst3_pluginterfaces-31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c.tar.gz
 faecf7ff477ac8f5f1955609770bb2331207588a4be98ea86c15b199d321feb05eb915f8770c9d462c815b2d8c11e14eb78f271c2aa81d46c1ee9aef18231025  vst3_public_sdk-a3911a4615dabbfdfd9d181ee26b05c70c289a95.tar.gz
+1bbdfc9801d382b344cdf8b67ae6ab1bd3de6da36d7df5c5b246253cfb8a8d2c163639ed481e33b57d32d659abeef632ff3b3737f383709810d61f66e70f3835  pffft-fbc4058602803f40dc554b8a5d2bcc694c005f2f.tar.gz
 "

@@ -25,7 +25,7 @@ USB boot.
 | `qt6/` | Qt 6.12.0, which Alpine edge does not ship yet (it has 6.11): the recipes of aports MR [!107047](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/107047) for the modules Zrythm needs, plus `qt6-qtcanvaspainter` and `qt6-qttasktree` (new in 6.12, not in aports) |
 | `deps/` | Libraries Zrythm needs that aports does not package: au, scnlib, magic_enum, type_safe (with debug_assert), gsl-lite, json-schema-validator, MPMCQueue, at the versions in `conan.lock` |
 | `deploy.sh` | Builds packages (`zrythm` from this checkout) and installs them on a running device over SSH (`pmbootstrap sideload`), optionally restarting the session |
-| `seed-distfiles.sh` | Puts the sources CPM would fetch (JUCE, CLAP, clap-helpers, the VST3 SDK with its submodules, farbot, loop-tempo-estimator) into pmbootstrap's distfiles cache, so `zrythm` builds offline |
+| `seed-distfiles.sh` | Puts the sources CPM would fetch (JUCE, CLAP, clap-helpers, the VST3 SDK with its submodules, farbot, loop-tempo-estimator with pffft) into pmbootstrap's distfiles cache, so `zrythm` builds offline |
 
 Notes on `qt6/`:
 
@@ -45,9 +45,13 @@ Notes on `zrythm`:
 - There is no source tarball: it is built from a local checkout with
   `pmbootstrap build --src=<checkout> zrythm`. `--src` skips `$source`, so `prepare()` takes the
   CPM sources from the distfiles cache (seeded by `seed-distfiles.sh`), assembles the VST3 SDK
-  with its submodules, and CMake uses them through `CPM_<name>_SOURCE`. The commits are in the
-  APKBUILD as well as in `package-lock.cmake`; `prepare()` stops if they differ, and if `pkgver`
-  does not match `VERSION.txt`.
+  with its submodules and applies loop-tempo-estimator's patch; CMake uses them through
+  FetchContent's `FETCHCONTENT_SOURCE_DIR_<NAME>`, which keeps the declarations in
+  `package-lock.cmake` (`DOWNLOAD_ONLY`, `SOURCE_SUBDIR`). CPM's own `CPM_<name>_SOURCE` drops
+  them, and the VST3 SDK's whole CMake project (VSTGUI, GTK samples) would be configured. The
+  commits are in the APKBUILD as well as in `package-lock.cmake` (pffft's in
+  loop-tempo-estimator's `source/cmake/pffft.cmake`); `prepare()` stops if they differ, and if
+  `pkgver` does not match `VERSION.txt`.
 - The other dependencies come from Alpine (fmt, spdlog, Boost 1.89, libsndfile, lilv, oneTBB, …)
   and from `qt6/` and `deps/`, not from Conan. Zrythm's CMake finds lilv, zstd and xxHash through
   pkg-config when there is no CMake package, and takes the LV2 spec bundles from `lv2.pc`.
