@@ -66,47 +66,44 @@ ColumnLayout {
       required property string filePath
       required property int index
 
-      highlighted: row == treeView.currentRow
-      text: fileName + fileName
-      width: fileListView.width
-
-      action: Action {
-        text: "Activate"
-
-        onTriggered: {
-          console.log("activated", itemDelegate.filePath);
-          if (root.fileSystemModel.isDir(itemDelegate.fileInfo)) {} else {
-            root.fileActivated(itemDelegate.filePath);
-          }
+      // Starts or ends dragging this row's file out of the tree
+      function setFileDragActive(active: bool) {
+        if (active) {
+          fileListView.selectedFile = itemDelegate.filePath;
+          fileDragItem.filePath = itemDelegate.filePath;
+          fileDragItem.Drag.active = true;
+        } else {
+          fileDragItem.Drag.active = false;
         }
       }
 
-      MouseArea {
-        id: mouseArea
+      highlighted: row == treeView.currentRow
+      text: fileName
+      width: fileListView.width
 
-        anchors.fill: parent
-
-        // This avoids the delegate onClicked triggering the action
-        onClicked: {
-          console.log('clicked');
-          fileListView.selectedFile = itemDelegate.filePath;
+      TapHandler {
+        onDoubleTapped: {
+          if (!root.fileSystemModel.isDir(itemDelegate.fileInfo))
+            root.fileActivated(itemDelegate.filePath);
         }
-        onDoubleClicked: itemDelegate.animateClick()
+        onTapped: fileListView.selectedFile = itemDelegate.filePath
+      }
 
-        drag {
-          smoothed: true
-          target: itemDelegate
+      DragHandler {
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
+        target: null
 
-          onActiveChanged: {
-            if (drag.active) {
-              fileListView.selectedFile = itemDelegate.filePath;
-              fileDragItem.filePath = itemDelegate.filePath;
-              fileDragItem.Drag.active = true;
-            } else {
-              fileDragItem.Drag.active = false;
-            }
-          }
-        }
+        onActiveChanged: itemDelegate.setFileDragActive(active)
+      }
+
+      // On touchscreens only a horizontal swipe drags the file out; vertical
+      // swipes scroll the tree
+      DragHandler {
+        acceptedDevices: PointerDevice.TouchScreen
+        target: null
+        yAxis.enabled: false
+
+        onActiveChanged: itemDelegate.setFileDragActive(active)
       }
     }
     selectionModel: ItemSelectionModel {
