@@ -3,7 +3,6 @@
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Zrythm
 import ZrythmStyle
 import Qt.labs.synchronizer
@@ -16,8 +15,8 @@ ZrythmToolBar {
   readonly property Project project: session.project
   required property NotificationCenter notificationCenter
   required property ProjectSession session
-  // Whether the tempo, position and time signature readouts are shown here
-  property bool showTransportReadouts: true
+  // Whether to leave out the transport readouts and the master output meters
+  property bool compact: false
 
   centerItems: [
     TransportControls {
@@ -32,7 +31,7 @@ ZrythmToolBar {
       tempoMap: root.project.tempoMap
       transport: root.project.transport
       undoStack: root.session.undoStack
-      visible: root.showTransportReadouts
+      visible: !root.compact
     }
   ]
   leftItems: [
@@ -60,30 +59,12 @@ ZrythmToolBar {
     }
   ]
   rightItems: [
-    SpectrumAnalyzer {
-      Layout.preferredWidth: 60
-      fftSize: 512
-      portObservationManager: root.project.portObservationManager
-      sampleRate: root.project.engine.sampleRate
-      stereoPort: root.project.tracklist.singletonTracks.masterTrack.channel.audioOutPort
-
-      ToolTip {
-        text: qsTr("Master Output Spectrum")
-      }
-    },
-    WaveformViewer {
-      Layout.preferredWidth: 60
-      portObservationManager: root.project.portObservationManager
-      stereoPort: root.project.tracklist.singletonTracks.masterTrack.channel.audioOutPort
-
-      ToolTip {
-        text: qsTr("Master Output Visualizer")
-      }
-    },
-    DspLoadIndicator {
-      id: dspLoadIndicator
+    MasterOutputMeters {
+      project: root.project
+      visible: !root.compact
     },
     ToolSeparator {
+      visible: !root.compact
     },
     ToolButton {
       id: toggleLeftDock
@@ -134,15 +115,4 @@ ZrythmToolBar {
       notificationCenter: root.notificationCenter
     }
   ]
-
-  Timer {
-    interval: 600
-    repeat: true
-    running: true
-
-    onTriggered: {
-      dspLoadIndicator.xRuns = root.project.engine.xRunCount();
-      dspLoadIndicator.loadValue = root.project.engine.loadPercentage();
-    }
-  }
 }

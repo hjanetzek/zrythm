@@ -303,6 +303,7 @@ set(rel_qml_file_paths
   components/ActionRow.qml
   components/AutomationTracksListView.qml
   components/MainToolbar.qml
+  components/MasterOutputMeters.qml
   components/BalanceControl.qml
   components/ChannelView.qml
   components/ChannelSendControls.qml
