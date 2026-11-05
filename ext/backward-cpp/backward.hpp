@@ -242,6 +242,8 @@
 #include <dwarf.h>
 #include <elfutils/libdw.h>
 #include <elfutils/libdwfl.h>
+// Dl_info and dladdr(), used by TraceResolverLinuxBase
+#include <dlfcn.h>
 #endif
 
 #if BACKWARD_HAS_DWARF == 1
