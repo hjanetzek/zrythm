@@ -142,8 +142,14 @@ prepare() {
 		grep -q "GIT_TAG $c" package-lock.cmake ||
 			die "$c is not a GIT_TAG in package-lock.cmake: update the APKBUILD"
 	done
-	[ "$(sed 's/^v//; s/-alpha\./_alpha/; s/-beta\./_beta/; s/-rc\./_rc/' VERSION.txt)" = "${pkgver%%_p*}" ] ||
-		die "pkgver $pkgver does not match VERSION.txt ($(cat VERSION.txt))"
+	# pmbootstrap --src replaces pkgver with <version>_p<timestamp>, without the
+	# pre-release suffix (_alpha7): then only the version numbers are compared.
+	local version
+	version=$(sed 's/^v//; s/-alpha\./_alpha/; s/-beta\./_beta/; s/-rc\./_rc/' VERSION.txt)
+	case $pkgver in
+	*_p[0-9]*) [ "${version%%_*}" = "${pkgver%%_*}" ] ;;
+	*) [ "$version" = "$pkgver" ] ;;
+	esac || die "pkgver $pkgver does not match VERSION.txt ($(cat VERSION.txt))"
 }
 
 build() {
