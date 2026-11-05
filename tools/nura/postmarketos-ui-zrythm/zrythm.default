@@ -1,4 +1,4 @@
-# Settings for the Zrythm kiosk session (/etc/cage-ui/zrythm.sh,
+# Settings for the Zrythm kiosk session (/usr/libexec/zrythm/zrythm-session,
 # /usr/libexec/zrythm/zrythm-kiosk). Read when the session starts:
 # sudo systemctl restart tinydm after a change.
 

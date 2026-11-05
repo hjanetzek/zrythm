@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- labwc configuration of the Zrythm kiosk session -->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>0</gap>
+  </core>
+  <theme>
+    <titlebar>
+      <!-- no iconify: there is no taskbar to bring a window back -->
+      <layout>:max,close</layout>
+      <showTitle>yes</showTitle>
+    </titlebar>
+    <maximizedDecoration>titlebar</maximizedDecoration>
+    <font place="ActiveWindow"><name>sans</name><size>12</size></font>
+    <font place="InactiveWindow"><name>sans</name><size>12</size></font>
+  </theme>
+  <!-- taps act as mouse clicks, also on title bar buttons -->
+  <touch deviceName="" mouseEmulation="yes" />
+  <tablet mouseEmulation="yes" />
+  <windowRules>
+    <!-- Zrythm's windows open maximized; the title bar closes a window or
+         turns it into a floating one -->
+    <windowRule identifier="zrythm">
+      <action name="Maximize" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

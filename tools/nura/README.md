@@ -6,7 +6,7 @@ SPDX-License-Identifier: LicenseRef-ZrythmLicense
 # Zrythm on postmarketOS / Nura
 
 Packages for building Nura (formerly postmarketOS) images that boot straight into Zrythm,
-running in a [cage](https://github.com/cage-kiosk/cage) kiosk session on PipeWire. The setup
+running in a [labwc](https://labwc.github.io/) kiosk session on PipeWire. The setup
 follows the Kick (`behringer-kick/Linux/nura`) and Oscairn (`oscairn/os/nura`) ports, which run
 on the same device: real-time limits, waiting for PipeWire, touchscreen rotation, CPU governor,
 USB boot.
@@ -20,7 +20,7 @@ USB boot.
 | Package | What it does |
 |---|---|
 | `zrythm/` | Builds Zrythm from this checkout for musl: `/usr/bin/zrythm` and its plugin scanner; debug info (`-g1`) in `zrythm-dbg` |
-| `postmarketos-ui-zrythm/` | Kiosk UI: `postmarketos-base-ui-cage` + `zrythm` + `pipewire-alsa`. `/etc/cage-ui/zrythm.sh` sets the output scale, waits for PipeWire and forces its quantum; `/usr/libexec/zrythm/zrythm-kiosk` starts Zrythm as a native Wayland client and restarts it if it exits; settings in `/etc/default/zrythm`; a `tinydm.service` drop-in raises the real-time and locked-memory limits |
+| `postmarketos-ui-zrythm/` | Kiosk UI: a tinydm session running labwc + `zrythm` + `pipewire-alsa`. labwc gives plugin windows and dialogs title bars with touch-sized buttons; `/usr/libexec/zrythm/zrythm-session` rotates the panel, sets the output scale, waits for PipeWire and forces its quantum; `/usr/libexec/zrythm/zrythm-kiosk` starts Zrythm as a native Wayland client and restarts it if it exits; settings in `/etc/default/zrythm`; a `tinydm.service` drop-in raises the real-time and locked-memory limits |
 | `zrythm-quirks-google-kukui/` | Lenovo Duet only: udev rule that rotates the touchscreen and pen, and the CPU governor and idle settings applied before each session; installed automatically (`install_if` the device package and the Zrythm UI) |
 | `qt6/` | Qt 6.12.0, which Alpine edge does not ship yet (it has 6.11): the recipes of aports MR [!107047](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/107047) for the modules Zrythm needs, plus `qt6-qtcanvaspainter` and `qt6-qttasktree` (new in 6.12, not in aports) |
 | `deps/` | Libraries Zrythm needs that aports does not package: au, scnlib, magic_enum, type_safe (with debug_assert), gsl-lite, json-schema-validator, MPMCQueue, at the versions in `conan.lock`; and nlohmann_json at the commit Zrythm pins (aports' 3.12.0 never compiles its `from_json` for `std::optional`) |
@@ -151,20 +151,27 @@ The Qt packages and the libraries in `deps/` are installed with Zrythm the first
 
 ## The session
 
-`postmarketos-ui-zrythm` runs, in the cage session started by tinydm as the default user:
+`postmarketos-ui-zrythm` installs the session `/usr/share/wayland-sessions/zrythm.desktop` and
+makes it tinydm's default (`tinydm-set-session`, on install and upgrade). tinydm starts it as the
+default user: labwc with the configuration in `/etc/xdg/zrythm-labwc/`, whose `autostart` runs
 
-1. `/etc/cage-ui/zrythm.sh` (sourced by `cage-ui-session.sh`): sets every output to scale 2
+1. `/usr/libexec/zrythm/zrythm-session`: rotates each panel to its DRM "panel orientation"
+   (`drm_info`, `wlr-randr`; transform 90 on the Duet), sets every output to scale 2
    (`ZRYTHM_OUTPUT_SCALE`), waits up to 10 s for PipeWire's default sink and forces PipeWire's
-   quantum to 256 frames (`ZRYTHM_QUANTUM`).
+   quantum to 256 frames (`ZRYTHM_QUANTUM`), then
 2. `/usr/libexec/zrythm/zrythm-kiosk`: starts `zrythm` as a native Wayland client
-   (`QT_QPA_PLATFORM=wayland`, no window decorations) with an unlimited locked-memory limit, and
-   restarts it two seconds after it exits.
+   (`QT_QPA_PLATFORM=wayland`) with an unlimited locked-memory limit, and restarts it two seconds
+   after it exits (also when its window is closed).
 
-Only one kiosk UI package may be installed: the cage session sources every `/etc/cage-ui/*.sh`
-in alphabetical order and the last `CAGE_UI_COMMAND` wins. On a device with the Kick or Oscairn
-image, remove theirs (`sudo apk del postmarketos-ui-kick postmarketos-ui-oscairn`), and check
-`ls /etc/cage-ui` for scripts no package owns any more (`apk info --who-owns`): an old
-`kick.sh` resets the output scale to 1 half a minute after the session starts.
+labwc (`rc.xml`) draws the window decorations: Zrythm's windows open maximized with a title bar,
+whose buttons (`themerc-override`: touch-sized) close a window or turn it into a floating one;
+plugin windows that set their own size open floating. Taps act as mouse clicks
+(`mouseEmulation`), also on the title bars. There is no desktop menu and no minimize button,
+since nothing could bring a minimized window back.
+
+On a device that ran the Kick or Oscairn image, remove their kiosk packages
+(`sudo apk del postmarketos-ui-kick postmarketos-ui-oscairn`); their cage sessions are no longer
+the default after installing `postmarketos-ui-zrythm`.
 
 Settings, in `/etc/default/zrythm` (a config file, kept on upgrades); `sudo systemctl restart
 tinydm` applies them:

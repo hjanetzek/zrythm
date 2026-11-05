@@ -1,0 +1,61 @@
+#!/bin/sh
+# Zrythm kiosk session, started by labwc (/etc/xdg/zrythm-labwc/autostart):
+# rotates panels to their mounted orientation, sets the output scale, waits for
+# PipeWire, forces its quantum, then runs Zrythm (zrythm-kiosk).
+# Settings: /etc/default/zrythm.
+
+ZRYTHM_OUTPUT_SCALE=2
+ZRYTHM_QUANTUM=256
+[ -f /etc/default/zrythm ] && . /etc/default/zrythm
+
+# Each connected panel gets the transform for its DRM "panel orientation"
+# property (the Lenovo Duet's panel is mounted "Left Side Up": transform 90).
+zrythm_rotate_panels() {
+	drm_info -j 2>/dev/null | jq -r '.[] | (.connectors // empty) | .[]
+		| select(.status == 1)
+		| .properties."panel orientation" as $p
+		| select($p != null)
+		| "\(.id) \($p.spec[] | select(.value == $p.value) | .name)"' |
+	while read -r id orientation; do
+		case $orientation in
+		"Upside Down") transform=180 ;;
+		"Left Side Up") transform=90 ;;
+		"Right Side Up") transform=270 ;;
+		*) continue ;;
+		esac
+		for f in /sys/class/drm/*/connector_id; do
+			[ "$(cat "$f")" = "$id" ] || continue
+			name=${f%/connector_id}
+			name=${name##*/card?-}
+			wlr-randr --output "$name" --transform "$transform"
+		done
+	done
+}
+zrythm_rotate_panels || true
+
+# Zrythm is a native Wayland client: at a fractional or integer output scale
+# Qt draws at the panel's resolution.
+if [ -n "$ZRYTHM_OUTPUT_SCALE" ]; then
+	wlr-randr --json | jq -r '.[] | select(.enabled) | .name' |
+	while read -r output; do
+		wlr-randr --output "$output" --scale "$ZRYTHM_OUTPUT_SCALE"
+	done
+fi
+
+# The audio engine opens ALSA "default", i.e. PipeWire. During login PipeWire is
+# only socket-activated and WirePlumber has not set up a sink yet, so that open
+# would fail. Wait (up to 10 s) until there is a default sink.
+i=0
+while [ "$i" -lt 100 ] && ! wpctl inspect @DEFAULT_AUDIO_SINK@ >/dev/null 2>&1; do
+	sleep 0.1
+	i=$((i + 1))
+done
+
+# A fixed quantum for the whole PipeWire graph (fine for a kiosk), so the ALSA
+# device's period and PipeWire's match and the engine's callbacks come evenly.
+if [ -n "$ZRYTHM_QUANTUM" ]; then
+	pw-metadata -n settings 0 clock.force-quantum "$ZRYTHM_QUANTUM" >/dev/null 2>&1 || true
+	export PIPEWIRE_LATENCY="$ZRYTHM_QUANTUM/48000"
+fi
+
+exec /usr/libexec/zrythm/zrythm-kiosk

@@ -1,0 +1,2 @@
+# labwc autostart of the Zrythm kiosk session
+/usr/libexec/zrythm/zrythm-session &

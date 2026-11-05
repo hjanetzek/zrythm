@@ -1,0 +1,6 @@
+# Touch-sized title bar buttons, in logical pixels (doubled at output scale 2)
+window.button.width: 44
+window.button.height: 36
+window.button.spacing: 4
+window.titlebar.padding.width: 4
+window.titlebar.padding.height: 4

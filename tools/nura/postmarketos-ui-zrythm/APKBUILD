@@ -1,39 +1,63 @@
 # Contributor: Hannes Janetzek <hannes.janetzek@gmail.com>
-# Kiosk UI for postmarketOS/Nura: boots straight into Zrythm (cage, Wayland, PipeWire).
+# Kiosk UI for postmarketOS/Nura: boots straight into Zrythm in the labwc
+# compositor (Wayland, PipeWire). labwc gives plugin windows and dialogs title
+# bars, so they can be moved and closed by touch.
 pkgname=postmarketos-ui-zrythm
-pkgver=1
-pkgrel=1
-pkgdesc="Zrythm digital audio workstation as a kiosk (Wayland, cage)"
+pkgver=2
+pkgrel=0
+pkgdesc="Zrythm digital audio workstation as a kiosk (Wayland, labwc)"
 arch="noarch"
 url="https://www.zrythm.org/"
 license="LicenseRef-ZrythmLicense"
 options="!check pmb:drm pmb:support-systemd"
 depends="
+	dbus
+	drm_info
+	elogind
 	jq
+	labwc
 	pipewire-alsa
 	pipewire-tools
-	postmarketos-base-ui-cage
+	postmarketos-base-ui
+	postmarketos-base-ui-audio
+	postmarketos-base-ui-networkmanager
+	seatd
+	tinydm
 	wlr-randr
+	xwayland
 	zrythm
 	"
 _pmb_groups="audio seat"
+install="$pkgname.post-install $pkgname.post-upgrade"
 source="
-	zrythm.sh
+	zrythm.desktop
+	rc.xml
+	themerc-override
+	menu.xml
+	autostart
+	zrythm-session
 	zrythm-kiosk
 	zrythm.default
 	50-zrythm-realtime.conf
 	"
 
 package() {
-	install -Dm644 "$srcdir"/zrythm.sh -t "$pkgdir"/etc/cage-ui/
-	install -Dm755 "$srcdir"/zrythm-kiosk -t "$pkgdir"/usr/libexec/zrythm/
+	install -Dm644 "$srcdir"/zrythm.desktop -t "$pkgdir"/usr/share/wayland-sessions/
+	install -Dm644 "$srcdir"/rc.xml "$srcdir"/themerc-override "$srcdir"/menu.xml \
+		"$srcdir"/autostart -t "$pkgdir"/etc/xdg/zrythm-labwc/
+	install -Dm755 "$srcdir"/zrythm-session "$srcdir"/zrythm-kiosk -t "$pkgdir"/usr/libexec/zrythm/
 	install -Dm644 "$srcdir"/zrythm.default "$pkgdir"/etc/default/zrythm
 	install -Dm644 "$srcdir"/50-zrythm-realtime.conf \
 		-t "$pkgdir"/usr/lib/systemd/system/tinydm.service.d/
 }
 sha512sums="
-7b17b544fe4eb862b0d09aecf8b83565e24ea8dc52a7c1088d8427930898106b99ff8787d11ba2c3e7379c0eff52060bf7c4b8c7ced1cead865c92dea1f825a7  zrythm.sh
-1fa279c8dbb65295a8e5aac15897e5c2dcb2f2d482019fd1e9ea52c2df261b0b13300e0edebebc7d92f906aa3b910fe93e8ff5a73467a65cdc11919a33974587  zrythm-kiosk
-59435b8a3f5a0f4c3e977b88ecaec9785bc72f7d0336a8ef4fd345fdf4fc5d08007f5b93ffc73ba91dc0866ceb36ab054150de9d9dab75267bac115793d5ce0a  zrythm.default
-e84cf5a2f59760b1adc9510e8ca345f6a8a8487298b1746734efd23a8496fcb670b36f88ce49bb07c6eb2a78499813b398833e769d6386e37c1cffbfd244f997  50-zrythm-realtime.conf
+35d9cd7fdf08917509471777500e0796716ee0c82b1981e7ed3f1af92a4f5dd4ddec1d0e5cc9d55518822200ddf8c09d98cf86f33296d03011a0b1f1b54cbb32  zrythm.desktop
+b07479d89494c39ba8e42561897db5833db1311aba469be9d59d0d426cff7a17a7487a1fc384b0b5efed4e643289bf41c74c8359f799c7a0d0f67fea8330f009  rc.xml
+a42bbb1e845ebafef1674ffbee72ff63b20a4101ec6f2547ed070a325ec03f658a0f5a9516a8627692aefda062a93982cefaa18d9a1342df68b554d61f787c7c  themerc-override
+62ff28c986d60bd66d005a1b58cccc549d80932e552cc310f793762ca0fe52bca79e3fb3abf4f11ab619be75d8518620746a05b1779dd02a27b8757836b5abb5  menu.xml
+afe3b598c001bc37b830e1e1445c72573275cbdd7a22dc44a4ab1921e55c2355c09047017b6d9f9b32b70a7ab92617d4017de3e5813844c65bac15e4dc9b3250  autostart
+b33faa0a72c6fda20b42a2342ad89e9dcf631d0616d76a6c405315c66ff646bfbef81b2aea05626fc392213a953acbd7a94fdc4e20ffb56e93228246c24daa7c  zrythm-session
+81562df020b20d47f63e64d28e4b8b2e9d5085acf430c197f8fe852681815cea67ef97e0b72805fd7537e0d352380703f89b3ebdee9a7b40254533e6ec7d0b77  zrythm-kiosk
+911d4a61c725d51a7deda90a1b5f50c03405e030757ff7e894ee8b0273aaf1d61304beae7847db7deb1dd1530e4b2c15ce0f6e9f194cbc8854d5e0bac51d646b  zrythm.default
+63d3e4d9b67b93341b3027239410a247b3369724ee1cbada537df37dc1b6f54d9bba6f0b7c4d72e891a8c6087be094f1c68bb394650c26b8fffdf1b15072e76b  50-zrythm-realtime.conf
 "

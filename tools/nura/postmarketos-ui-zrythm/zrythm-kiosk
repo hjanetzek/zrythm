@@ -1,7 +1,7 @@
 #!/bin/sh
-# Zrythm in the cage kiosk session (CAGE_UI_COMMAND, set by /etc/cage-ui/zrythm.sh):
-# restarted if it exits, so a crash does not end the session. Output goes to
-# tinydm's log (~/.local/state/tinydm.log).
+# Zrythm in the kiosk session (started by /usr/libexec/zrythm/zrythm-session):
+# restarted if it exits, so a crash or closing its window does not end the
+# session. Output goes to tinydm's log (~/.local/state/tinydm.log).
 
 [ -f /etc/default/zrythm ] && . /etc/default/zrythm
 
@@ -9,7 +9,7 @@
 # allows an unlimited RLIMIT_MEMLOCK).
 ulimit -l unlimited 2>/dev/null || echo "zrythm-kiosk: locked memory limited to $(ulimit -l) kB"
 
-# Native Wayland; cage draws no window decorations.
+# Native Wayland; labwc draws the window decorations.
 export QT_QPA_PLATFORM=wayland
 export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 [ -n "${ZRYTHM_QSG_RHI_BACKEND:-}" ] && export QSG_RHI_BACKEND="$ZRYTHM_QSG_RHI_BACKEND"

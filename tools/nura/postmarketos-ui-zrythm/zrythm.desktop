@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Zrythm
+Comment=Zrythm kiosk in the labwc compositor
+Exec=dbus-run-session -- labwc -C /etc/xdg/zrythm-labwc
+TryExec=/usr/bin/labwc
+Type=Application
