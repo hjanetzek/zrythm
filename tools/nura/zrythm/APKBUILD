@@ -121,12 +121,18 @@ source="
 builddir="$srcdir/$pkgname"
 
 # Unpacks distfile $1 into $srcdir (as directory $2, the archive's top-level
-# directory) unless it is unpacked already.
+# directory) unless it is unpacked already. The distfile is looked up in
+# abuild's SRCDEST, in pmbootstrap's distfiles cache (mounted at
+# /var/cache/distfiles; abuild uses another SRCDEST when ~/.cache/abuild exists
+# or the cache is not writable) and in $srcdir.
 _unpack() {
 	[ -d "$srcdir/$2" ] && return 0
-	local f="$SRCDEST/$1"
-	[ -e "$f" ] || f="$srcdir/$1"
-	[ -e "$f" ] || die "$1 missing from $SRCDEST: run tools/nura/seed-distfiles.sh"
+	local f dir
+	for dir in "$SRCDEST" /var/cache/distfiles "$srcdir"; do
+		f="$dir/$1"
+		[ -e "$f" ] && break
+	done
+	[ -e "$f" ] || die "$1 missing from $SRCDEST and /var/cache/distfiles: run tools/nura/seed-distfiles.sh"
 	tar -xzf "$f" -C "$srcdir"
 }
 
