@@ -19,8 +19,6 @@ already solved in local pmbootstrap builds. How the packages work: [README.md](R
 | Recipe directories | `tools/nura/deps`, `tools/nura/zrythm`, `tools/nura/postmarketos-ui-zrythm`, `tools/nura/zrythm-quirks-google-kukui` |
 | Not linked | `tools/nura/qt6`: identical copies of nura-builds' `aports/qt6` (all nine modules, compared on 2026-11-16) |
 
-- The fork has only `master` until `nura-duet` is pushed there; until then the target cannot
-  check it out.
 - `nura-duet` is rebased onto Zrythm's `develop` regularly and force-pushed: never assume a
   fast-forward between runs; check out the branch tip fresh.
 - `nura-duet` contains the clip launcher branch (`clip-launcher-fixes`) and the Nura commits on
@@ -131,7 +129,6 @@ for the CI runners.
 
 ## Open points
 
-- Push `nura-duet` to `hjanetzek/zrythm` (the fork has only `master`).
 - `tools/nura/qt6` carries APKBUILDs and patches from aports MR !107047 without a licence
   statement (aports has none); Zrythm's `reuse lint` fails on those 11 files. Once Alpine ships
   Qt 6.12, both copies of the recipes go away (except qtcanvaspainter and qttasktree until aports
