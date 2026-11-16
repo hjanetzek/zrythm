@@ -15,13 +15,13 @@ already solved in local pmbootstrap builds. How the packages work: [README.md](R
 | | |
 |---|---|
 | Repository | `https://github.com/hjanetzek/zrythm` (public fork of `zrythm/zrythm`) |
-| Branch | `nura-duet` |
+| Branch | `nura` |
 | Recipe directories | `tools/nura/deps`, `tools/nura/zrythm`, `tools/nura/postmarketos-ui-zrythm`, `tools/nura/zrythm-quirks-google-kukui` |
 | Not linked | `tools/nura/qt6`: identical copies of nura-builds' `aports/qt6` (all nine modules, compared on 2026-11-16) |
 
-- `nura-duet` is rebased onto Zrythm's `develop` regularly and force-pushed: never assume a
+- `nura` is rebased onto Zrythm's `develop` regularly and force-pushed: never assume a
   fast-forward between runs; check out the branch tip fresh.
-- `nura-duet` contains the clip launcher branch (`clip-launcher-fixes`) and the Nura commits on
+- `nura` contains the clip launcher branch (`clip-launcher-fixes`) and the Nura commits on
   top of it.
 - No git-lfs and no submodules are needed for the package build.
 - A change to a Qt recipe here is made in nura-builds' `aports/qt6` as well (and the reverse):
