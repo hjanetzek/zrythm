@@ -21,12 +21,11 @@
 #
 # Examples:
 #   deploy.sh -r zrythm                  # build zrythm from this checkout, install, restart
-#   deploy.sh zrythm zrythm-dbg          # also install the debug info
 #   deploy.sh -H 192.168.178.93 postmarketos-ui-zrythm
 #
 # zrythm is built from this checkout (pmbootstrap build --src); other packages are built from
 # their APKBUILDs, zrythm first (with --src, pmbootstrap does not build missing dependencies).
-# A subpackage (zrythm-dbg) is built with its main package. Installing uses
+# A subpackage (e.g. NAME-dbg) is built with its main package. Installing uses
 # "pmbootstrap sideload": it copies the newest version of each package and runs "sudo apk add"
 # on the device, so sudo asks for passwords on both machines.
 set -eu

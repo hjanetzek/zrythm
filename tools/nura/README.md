@@ -21,7 +21,7 @@ CI builds (packages, images) run in nura-builds; what they need from here: [CI.m
 
 | Package | What it does |
 |---|---|
-| `zrythm/` | Builds Zrythm from this checkout for musl: `/usr/bin/zrythm` and its plugin scanner; debug info (`-g1`) in `zrythm-dbg` |
+| `zrythm/` | Builds Zrythm from this checkout for musl: `/usr/bin/zrythm` and its plugin scanner; a release build, without debug info and tests |
 | `postmarketos-ui-zrythm/` | Kiosk UI: a tinydm session running labwc + `zrythm` + `pipewire-alsa`. labwc gives plugin windows and dialogs title bars with touch-sized buttons; `/usr/libexec/zrythm/zrythm-session` rotates the panel, sets the output scale, waits for PipeWire and forces its quantum; `/usr/libexec/zrythm/zrythm-kiosk` starts Zrythm as a native Wayland client and restarts it if it exits; settings in `/etc/default/zrythm`; a `tinydm.service` drop-in raises the real-time and locked-memory limits |
 | `zrythm-quirks-google-kukui/` | Lenovo Duet only: udev rule that rotates the touchscreen and pen, and the CPU governor and idle settings applied before each session; installed automatically (`install_if` the device package and the Zrythm UI) |
 | `qt6/` | Qt 6.12.0, which Alpine edge does not ship yet (it has 6.11): the recipes of aports MR [!107047](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/107047) for the modules Zrythm needs, plus `qt6-qtcanvaspainter` and `qt6-qttasktree` (new in 6.12, not in aports) |
@@ -60,8 +60,8 @@ Notes on `zrythm`:
 - CMake options: `ZRYTHM_BUNDLE_RUNTIME=OFF` (no Qt, QML modules or libstdc++ copied next to
   Zrythm; they come from the system packages), `ZRYTHM_LTO=OFF` (no link-time optimization, which
   would run under qemu), `ZRYTHM_CHECK_UPDATES=OFF`, no manpage, shell completions or tests.
-- Build type `RelWithDebInfo` with `-g1` (function names and lines for backtraces and `perf`),
-  `-mcpu=cortex-a73` on aarch64, in `build-nura/` inside the `--src` copy (ignored by
+- Build type `Release` at `-O2`, without debug info (no `-dbg` subpackage; abuild strips the
+  binaries, so backtraces carry no function names) and without tests, `-mcpu=cortex-a73` on aarch64, in `build-nura/` inside the `--src` copy (ignored by
   `.gitignore`, so rsync keeps it between `--lax` builds). Compile jobs: pmbootstrap's `jobs`
   setting, but at most one per 2 GB of available memory.
 - `-D_LARGEFILE64_SOURCE`: musl 1.2.4+ hides `stat64` and friends without it.
@@ -149,7 +149,6 @@ tools/nura/preview-kiosk.sh -o /tmp/kiosk.png -- ~/Audio/zrythm/testing
 
 ```sh
 tools/nura/deploy.sh -r zrythm                   # build from this checkout, install, restart the session
-tools/nura/deploy.sh zrythm zrythm-dbg           # also install the debug info
 tools/nura/deploy.sh -n -H 192.168.178.93 postmarketos-ui-zrythm   # already built, other address
 tools/nura/deploy.sh -k -n zrythm postmarketos-ui-zrythm           # a device with another work dir's image
 ```

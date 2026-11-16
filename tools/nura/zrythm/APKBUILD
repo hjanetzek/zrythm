@@ -89,7 +89,6 @@ makedepends="
 	xxhash-dev
 	zstd-dev
 	"
-subpackages="$pkgname-dbg"
 # Keep these the same as the GIT_TAGs in package-lock.cmake.
 _jucecommit=3fb5cbc0340758596dac39f7c8de47d562b4896e
 _clapcommit=29ffcc273be7c7c651f6c9953b99e69700e2387a
@@ -201,11 +200,12 @@ build() {
 		;;
 	esac
 
-	# RelWithDebInfo with -g1: function names and lines for backtraces and perf
-	# (in zrythm-dbg) at a fraction of the size of full debug info. No LTO: its
-	# code generation would run under qemu in pmbootstrap.
+	# Release at -O2 (CMake's Release default is -O3), without debug info and
+	# without tests. No LTO: its code generation would run under qemu in
+	# pmbootstrap.
 	# ZRYTHM_WITH_LIBDW: backtraces through libgcc's unwinder and libdw; musl has
-	# no execinfo.h, backward-cpp's default.
+	# no execinfo.h, backward-cpp's default. abuild strips the binaries, so
+	# backtraces carry no function names.
 	# The CPM packages are taken from $srcdir through FetchContent's source
 	# directory overrides, which keep the declarations in package-lock.cmake
 	# (DOWNLOAD_ONLY, SOURCE_SUBDIR); CPM's own CPM_<name>_SOURCE overrides drop
@@ -216,12 +216,12 @@ build() {
 	# directory. build-nura/ matches .gitignore, so pmbootstrap's rsync of the
 	# checkout neither copies nor deletes it.
 	cmake -S . -B build-nura -G Ninja \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DCMAKE_C_FLAGS="$CFLAGS" \
 		-DCMAKE_CXX_FLAGS="$CXXFLAGS" \
-		-DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
-		-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
+		-DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" \
+		-DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
 		-DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS" \
 		-DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS" \
 		-DCMAKE_MODULE_LINKER_FLAGS="$LDFLAGS" \

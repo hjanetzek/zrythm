@@ -89,7 +89,8 @@ because `--src` builds do not build missing dependencies:
 - **CMake options** (APKBUILD `build()`): `ZRYTHM_BUNDLE_RUNTIME=OFF` (no Qt, QML modules or
   libstdc++ copied into the package), `ZRYTHM_LTO=OFF`, `ZRYTHM_WITH_LIBDW=ON` (musl has no
   `execinfo.h`), `ZRYTHM_CHECK_UPDATES=OFF`, no tests, manpage or shell completions.
-  `RelWithDebInfo` with `-g1`: the debug info goes to `zrythm-dbg`.
+  `Release` at `-O2`: no debug info (no `-dbg` subpackage) and no tests. abuild strips the
+  binaries, so backtraces on the device carry no function names.
 - **LTO** is off because under pmbootstrap on x86_64 hosts its code generation runs under qemu. On
   native arm64 runners it would be possible, but it multiplies link time and memory; leave it off
   unless release builds are measured with it.
