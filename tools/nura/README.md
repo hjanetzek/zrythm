@@ -11,6 +11,8 @@ follows the Kick (`behringer-kick/Linux/nura`) and Oscairn (`oscairn/os/nura`) p
 on the same device: real-time limits, waiting for PipeWire, touchscreen rotation, CPU governor,
 USB boot.
 
+CI builds (packages, images) run in nura-builds; what they need from here: [CI.md](CI.md).
+
 | Target | Nura device | Status |
 |---|---|---|
 | Lenovo IdeaPad Duet (Chromebook) | `google-kukui` (mainline MediaTek kernel) | boots into Zrythm: native Wayland in labwc, OpenGL ES, scale 2 |
